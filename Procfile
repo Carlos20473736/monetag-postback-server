@@ -1,1 +1,1 @@
-web: node server_v2_fixed.js
+web: node server_simple.js
