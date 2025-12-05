@@ -1,1 +1,1 @@
-web: node server_monetag_compliant.js
+web: node server_short_url.js
