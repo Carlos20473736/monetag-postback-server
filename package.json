@@ -1,29 +1,22 @@
 {
   "name": "monetag-postback-server",
-  "version": "2.0.0",
-  "description": "Backend para receber postbacks de impressão e clique do Monetag com MySQL",
-  "main": "server_v2.js",
+  "version": "2.1.0",
+  "description": "Backend para receber postbacks do Monetag - URL curta",
+  "main": "server_short_url.js",
   "scripts": {
-    "start": "node server_v2.js",
-    "dev": "nodemon server_v2.js",
-    "legacy": "node server.js"
+    "start": "node server_short_url.js",
+    "dev": "nodemon server_short_url.js"
   },
   "keywords": [
     "monetag",
     "postback",
-    "telegram",
-    "mysql"
+    "telegram"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.0.3",
-    "mysql2": "^3.6.0"
-  },
-  "devDependencies": {
-    "nodemon": "^2.0.20"
+    "cors": "^2.8.5"
   },
   "engines": {
     "node": "18.x"
