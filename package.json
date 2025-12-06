@@ -4,8 +4,8 @@
   "description": "Backend para rastrear postbacks do Monetag por usuário (email)",
   "main": "server_monetag_persistent.js",
   "scripts": {
-    "start": "node server_monetag_compliant_v2.js",
-    "dev": "nodemon server_monetag_compliant_v2.js"
+    "start": "node server_monetag_persistent.js",
+    "dev": "nodemon server_monetag_persistent.js"
   },
   "keywords": [
     "monetag",
