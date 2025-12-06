@@ -1,16 +1,17 @@
 {
   "name": "monetag-postback-server",
-  "version": "2.1.0",
-  "description": "Backend para receber postbacks do Monetag - URL curta",
-  "main": "server_short_url.js",
+  "version": "3.0.0",
+  "description": "Backend para rastrear postbacks do Monetag por usuário (email)",
+  "main": "server_by_user.js",
   "scripts": {
-    "start": "node server_short_url.js",
-    "dev": "nodemon server_short_url.js"
+    "start": "node server_by_user.js",
+    "dev": "nodemon server_by_user.js"
   },
   "keywords": [
     "monetag",
     "postback",
-    "telegram"
+    "telegram",
+    "user-tracking"
   ],
   "author": "",
   "license": "MIT",
