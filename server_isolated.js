@@ -147,21 +147,30 @@ app.get('/api/stats/:zone_id/:ymid', (req, res) => {
 });
 
 // ============================================
-// ESTATÍSTICAS POR ZONA (RETORNA TODOS OS USUÁRIOS)
+// ESTATÍSTICAS POR ZONA (RETORNA AGREGAÇÃO + USUÁRIOS)
 // ============================================
 app.get('/api/stats/:zone_id', (req, res) => {
     const { zone_id } = req.params;
     const users = [];
+    let total_impressions = 0;
+    let total_clicks = 0;
+    let total_revenue = 0;
 
-    // Buscar todos os usuários dessa zona
+    // Buscar todos os usuários dessa zona e agregar
     Object.entries(userStats).forEach(([key, stats]) => {
         if (stats.zone_id === zone_id) {
             users.push(stats);
+            total_impressions += stats.total_impressions;
+            total_clicks += stats.total_clicks;
+            total_revenue += stats.total_revenue;
         }
     });
 
     res.json({
         zone_id: zone_id,
+        total_impressions: total_impressions,
+        total_clicks: total_clicks,
+        total_revenue: total_revenue,
         users_count: users.length,
         users: users,
         last_update: new Date().toISOString()
