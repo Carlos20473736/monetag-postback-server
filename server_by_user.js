@@ -171,14 +171,6 @@ app.get('/api/stats', (req, res) => {
 // ============================================
 app.get('/api/stats/user/:email', (req, res) => {
     const { email } = req.params;
-    
-    if (!userStats[email]) {
-        return res.status(404).json({
-            success: false,
-            error: `Nenhum dado encontrado para o usuário: ${email}`
-        });
-    }
-
     const userEmail = decodeURIComponent(email);
     
     // Se usuário não tem dados, retornar 0 em vez de erro
