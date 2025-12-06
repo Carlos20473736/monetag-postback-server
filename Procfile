@@ -1,1 +1,1 @@
-web: node server_new.js
+web: node server_isolated.js
