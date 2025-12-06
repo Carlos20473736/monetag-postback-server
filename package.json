@@ -4,7 +4,7 @@
   "description": "Backend para rastrear postbacks do Monetag por usuário (email)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node server_v2.js",
     "dev": "nodemon server.js"
   },
   "keywords": [
