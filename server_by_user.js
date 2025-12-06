@@ -180,10 +180,15 @@ app.get('/api/stats/user/:email', (req, res) => {
     }
 
     const userEmail = decodeURIComponent(email);
+    
+    // Se usuário não tem dados, retornar 0 em vez de erro
     if (!userStats[userEmail]) {
-        return res.status(404).json({
-            success: false,
-            error: `Nenhum dado encontrado para o usuário: ${userEmail}`
+        return res.json({
+            user_email: userEmail,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: 0,
+            zones: []
         });
     }
 
@@ -214,10 +219,16 @@ app.get('/api/stats/user/:email/zone/:zone_id', (req, res) => {
     const { email, zone_id } = req.params;
     const userEmail = decodeURIComponent(email);
     
+    // Se usuário não tem dados, retornar 0 em vez de erro
     if (!userStats[userEmail] || !userStats[userEmail].zones[zone_id]) {
-        return res.status(404).json({
-            success: false,
-            error: `Nenhum dado encontrado para ${userEmail} na zona ${zone_id}`
+        return res.json({
+            zone_id: zone_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: 0,
+            valued_events: 0,
+            not_valued_events: 0,
+            last_update: new Date().toISOString()
         });
     }
 
