@@ -2,10 +2,10 @@
   "name": "monetag-postback-server",
   "version": "3.0.0",
   "description": "Backend para rastrear postbacks do Monetag por usuário (email)",
-  "main": "server_by_user.js",
+  "main": "server_monetag_compliant_v2.js",
   "scripts": {
-    "start": "node server_by_user.js",
-    "dev": "nodemon server_by_user.js"
+    "start": "node server_monetag_compliant_v2.js",
+    "dev": "nodemon server_monetag_compliant_v2.js"
   },
   "keywords": [
     "monetag",
