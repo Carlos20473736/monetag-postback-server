@@ -85,6 +85,15 @@ app.get('/api/postback', (req, res) => {
     console.log('  - user_email:', user_email);
     console.log('  - estimated_price:', estimated_price);
 
+    // 🚫 BLOQUEAR postbacks com macros literais (não substituídas pelo Monetag)
+    if (user_email && (user_email.includes('{') || user_email.includes('}'))) {
+        console.log('[POSTBACK] 🚫 BLOQUEADO - Macro literal detectada:', user_email);
+        return res.json({ 
+            success: false, 
+            message: 'Postback bloqueado: macro não substituída. Configure o Monetag SSP sem parâmetros na URL.' 
+        });
+    }
+
     // ✅ Aceitar ymid, sub_id ou telegram_id como identificador
     const userId = telegram_id || sub_id || ymid || user_email || 'unknown';
     
