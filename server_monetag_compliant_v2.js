@@ -229,13 +229,22 @@ app.get('/api/stats/:zone_id', (req, res) => {
 app.get('/api/stats/:zone_id/:telegram_id', (req, res) => {
     const { zone_id, telegram_id } = req.params;
     
+    console.log(`[STATS] Buscando dados: zone_id=${zone_id}, telegram_id=${telegram_id}`);
+    
+    // Se nao existir dados, retornar estrutura vazia
     if (!stats[zone_id] || !stats[zone_id][telegram_id]) {
-        return res.status(404).json({
-            success: false,
-            error: 'User or zone not found'
+        console.log(`[STATS] Nenhum dado encontrado, retornando estrutura vazia`);
+        return res.json({
+            zone_id: zone_id,
+            telegram_id: telegram_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: 0,
+            events: []
         });
     }
 
+    console.log(`[STATS] Dados encontrados:`, stats[zone_id][telegram_id]);
     res.json(stats[zone_id][telegram_id]);
 });
 
