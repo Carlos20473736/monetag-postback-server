@@ -69,8 +69,6 @@ app.get('/api/postback', (req, res) => {
         zone_id,
         sub_zone_id,
         request_var,
-        telegram_id,
-        user_email,
         event_type,
         reward_event_type,
         estimated_price
@@ -81,28 +79,17 @@ app.get('/api/postback', (req, res) => {
     console.log('  - zone_id:', zone_id);
     console.log('  - ymid:', ymid);
     console.log('  - sub_id:', sub_id);
-    console.log('  - telegram_id:', telegram_id);
-    console.log('  - user_email:', user_email);
     console.log('  - estimated_price:', estimated_price);
 
-    // 🚫 BLOQUEAR postbacks com macros literais (não substituídas pelo Monetag)
-    if (user_email && (user_email.includes('{') || user_email.includes('}'))) {
-        console.log('[POSTBACK] 🚫 BLOQUEADO - Macro literal detectada:', user_email);
-        return res.json({ 
-            success: false, 
-            message: 'Postback bloqueado: macro não substituída. Configure o Monetag SSP sem parâmetros na URL.' 
-        });
-    }
-
-    // ✅ Aceitar ymid, sub_id ou telegram_id como identificador
-    const userId = telegram_id || sub_id || ymid || user_email || 'unknown';
+    // ✅ Aceitar ymid ou sub_id como identificador
+    const userId = sub_id || ymid || 'unknown';
     
     console.log('[POSTBACK] ✅ User ID final:', userId);
 
     // Validação
     if (!zone_id || !userId || !event_type) {
         console.log('[POSTBACK] ❌ Dados inválidos');
-        return res.status(400).json({ error: 'Missing required fields: zone_id, user_id (ymid/sub_id/telegram_id), event_type' });
+        return res.status(400).json({ error: 'Missing required fields: zone_id, user_id (ymid/sub_id), event_type' });
     }
 
     // Criar estrutura se não existir
@@ -113,7 +100,6 @@ app.get('/api/postback', (req, res) => {
         stats[zone_id][userId] = {
             zone_id: zone_id,
             user_id: userId,
-            user_email: user_email || 'unknown',
             total_impressions: 0,
             total_clicks: 0,
             total_revenue: 0,
@@ -136,10 +122,8 @@ app.get('/api/postback', (req, res) => {
         timestamp: new Date().toISOString(),
         zone_id: zone_id,
         user_id: userId,
-        user_email: user_email || 'unknown',
         ymid: ymid,
         sub_id: sub_id,
-        telegram_id: telegram_id,
         event_type: event_type,
         estimated_price: estimated_price,
         reward_event_type: reward_event_type
