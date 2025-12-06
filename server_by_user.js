@@ -382,6 +382,63 @@ app.get('/dashboard', (req, res) => {
 });
 
 // ============================================
+// RESET DE DADOS (ADMIN)
+// ============================================
+app.post('/api/admin/reset', (req, res) => {
+    // Limpar todos os dados
+    events.length = 0;
+    Object.keys(userStats).forEach(key => delete userStats[key]);
+
+    console.log('[ADMIN] 🔄 Dados resetados com sucesso');
+
+    res.json({
+        success: true,
+        message: 'Todos os dados foram resetados com sucesso',
+        data: {
+            events_cleared: 0,
+            users_cleared: 0,
+            timestamp: new Date().toISOString()
+        }
+    });
+});
+
+// Reset por usuário
+app.post('/api/admin/reset/user/:email', (req, res) => {
+    const { email } = req.params;
+    const userEmail = decodeURIComponent(email);
+
+    if (!userStats[userEmail]) {
+        return res.status(404).json({
+            success: false,
+            error: `Nenhum dado encontrado para ${userEmail}`
+        });
+    }
+
+    // Remover usuário
+    delete userStats[userEmail];
+
+    // Remover eventos do usuário
+    const removed = events.filter(e => e.user_email === userEmail).length;
+    for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].user_email === userEmail) {
+            events.splice(i, 1);
+        }
+    }
+
+    console.log(`[ADMIN] 🔄 Dados do usuário ${userEmail} resetados (${removed} eventos removidos)`);
+
+    res.json({
+        success: true,
+        message: `Dados do usuário ${userEmail} foram resetados`,
+        data: {
+            user_email: userEmail,
+            events_removed: removed,
+            timestamp: new Date().toISOString()
+        }
+    });
+});
+
+// ============================================
 // INICIAR SERVIDOR
 // ============================================
 const PORT = process.env.PORT || 3000;
