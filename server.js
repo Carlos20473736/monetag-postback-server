@@ -65,10 +65,12 @@ loadData();
 app.get('/api/postback', (req, res) => {
     const {
         ymid,
+        sub_id,
         zone_id,
         sub_zone_id,
         request_var,
         telegram_id,
+        user_email,
         event_type,
         reward_event_type,
         estimated_price
@@ -78,23 +80,31 @@ app.get('/api/postback', (req, res) => {
     console.log('  - event_type:', event_type);
     console.log('  - zone_id:', zone_id);
     console.log('  - ymid:', ymid);
+    console.log('  - sub_id:', sub_id);
     console.log('  - telegram_id:', telegram_id);
+    console.log('  - user_email:', user_email);
     console.log('  - estimated_price:', estimated_price);
 
+    // ✅ Aceitar ymid, sub_id ou telegram_id como identificador
+    const userId = telegram_id || sub_id || ymid || user_email || 'unknown';
+    
+    console.log('[POSTBACK] ✅ User ID final:', userId);
+
     // Validação
-    if (!zone_id || !telegram_id || !event_type) {
+    if (!zone_id || !userId || !event_type) {
         console.log('[POSTBACK] ❌ Dados inválidos');
-        return res.status(400).json({ error: 'Missing required fields' });
+        return res.status(400).json({ error: 'Missing required fields: zone_id, user_id (ymid/sub_id/telegram_id), event_type' });
     }
 
     // Criar estrutura se não existir
     if (!stats[zone_id]) {
         stats[zone_id] = {};
     }
-    if (!stats[zone_id][telegram_id]) {
-        stats[zone_id][telegram_id] = {
+    if (!stats[zone_id][userId]) {
+        stats[zone_id][userId] = {
             zone_id: zone_id,
-            telegram_id: telegram_id,
+            user_id: userId,
+            user_email: user_email || 'unknown',
             total_impressions: 0,
             total_clicks: 0,
             total_revenue: 0,
@@ -103,7 +113,7 @@ app.get('/api/postback', (req, res) => {
     }
 
     // Atualizar estatísticas
-    const userStats = stats[zone_id][telegram_id];
+    const userStats = stats[zone_id][userId];
     
     if (event_type === 'impression') {
         userStats.total_impressions++;
@@ -116,8 +126,11 @@ app.get('/api/postback', (req, res) => {
     const event = {
         timestamp: new Date().toISOString(),
         zone_id: zone_id,
-        telegram_id: telegram_id,
+        user_id: userId,
+        user_email: user_email || 'unknown',
         ymid: ymid,
+        sub_id: sub_id,
+        telegram_id: telegram_id,
         event_type: event_type,
         estimated_price: estimated_price,
         reward_event_type: reward_event_type
