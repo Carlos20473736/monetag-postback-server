@@ -190,6 +190,62 @@ app.get('/api/events/:zone_id', (req, res) => {
 });
 
 // ============================================
+// ESTATISTICAS POR EMAIL (PARA PAINEL ADMIN)
+// ============================================
+app.get('/api/stats/email/:email', (req, res) => {
+    const { email } = req.params;
+    const decodedEmail = decodeURIComponent(email);
+
+    const userEvents = events.filter(e => e.user_email === decodedEmail);
+    
+    const impressions = userEvents.filter(e => e.event_type === 'impression').length;
+    const clicks = userEvents.filter(e => e.event_type === 'click').length;
+    const revenue = userEvents.reduce((sum, e) => sum + e.estimated_price, 0);
+
+    res.json({
+        email: decodedEmail,
+        impressions: impressions,
+        clicks: clicks,
+        revenue: revenue,
+        total_events: userEvents.length,
+        last_activity: userEvents.length > 0 ? userEvents[userEvents.length - 1].timestamp : null
+    });
+});
+
+// ============================================
+// LISTAR TODOS OS USUARIOS COM DADOS (PARA PAINEL ADMIN)
+// ============================================
+app.get('/api/users/tracking', (req, res) => {
+    const emailMap = {};
+
+    events.forEach(event => {
+        if (!emailMap[event.user_email]) {
+            emailMap[event.user_email] = {
+                email: event.user_email,
+                impressions: 0,
+                clicks: 0,
+                revenue: 0,
+                last_activity: null
+            };
+        }
+
+        if (event.event_type === 'impression') {
+            emailMap[event.user_email].impressions++;
+        } else if (event.event_type === 'click') {
+            emailMap[event.user_email].clicks++;
+        }
+
+        emailMap[event.user_email].revenue += event.estimated_price;
+        emailMap[event.user_email].last_activity = event.timestamp;
+    });
+
+    res.json({
+        total_users: Object.keys(emailMap).length,
+        users: Object.values(emailMap)
+    });
+});
+
+// ============================================
 // RESET DE DADOS (ADMIN)
 // ============================================
 app.post('/api/admin/reset', (req, res) => {
