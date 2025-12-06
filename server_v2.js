@@ -1,702 +1,352 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
-const dotenv = require('dotenv');
-
-dotenv.config();
-
+const fs = require('fs');
+const path = require('path');
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Configuração do MySQL
-const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'monetag_db',
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-});
+// Arquivo de persistência
+const DATA_FILE = path.join(__dirname, 'data.json');
 
-// Função para criar tabela se não existir
-async function initializeDatabase() {
+// Armazenamento em memória
+let events = [];
+let stats = {};
+
+// ============================================
+// CARREGAR DADOS DO ARQUIVO
+// ============================================
+function loadData() {
     try {
-        const connection = await pool.getConnection();
-        
-        // Criar tabela de postbacks
-        await connection.execute(`
-            CREATE TABLE IF NOT EXISTS monetag_postbacks (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                event_type VARCHAR(50) NOT NULL,
-                zone_id VARCHAR(50) NOT NULL,
-                sub_id VARCHAR(100) NOT NULL,
-                ymid VARCHAR(100),
-                telegram_id VARCHAR(100),
-                estimated_price DECIMAL(10, 6),
-                request_var VARCHAR(255),
-                ip_address VARCHAR(45),
-                user_agent TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_event_type (event_type),
-                INDEX idx_zone_id (zone_id),
-                INDEX idx_created_at (created_at)
-            )
-        `);
-
-        // Criar tabela de estatísticas
-        await connection.execute(`
-            CREATE TABLE IF NOT EXISTS monetag_stats (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                zone_id VARCHAR(50) NOT NULL UNIQUE,
-                total_impressions INT DEFAULT 0,
-                total_clicks INT DEFAULT 0,
-                total_revenue DECIMAL(12, 6) DEFAULT 0,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_zone_id (zone_id)
-            )
-        `);
-
-        connection.release();
-        console.log('✅ Banco de dados inicializado com sucesso');
-    } catch (error) {
-        console.error('❌ Erro ao inicializar banco de dados:', error);
-        process.exit(1);
+        if (fs.existsSync(DATA_FILE)) {
+            const data = fs.readFileSync(DATA_FILE, 'utf8');
+            const parsed = JSON.parse(data);
+            events = parsed.events || [];
+            stats = parsed.stats || {};
+            console.log('[INIT] ✅ Dados carregados do arquivo');
+            console.log('[INIT] Total de eventos:', events.length);
+            console.log('[INIT] Zonas com dados:', Object.keys(stats).length);
+        } else {
+            console.log('[INIT] Arquivo de dados não encontrado, iniciando com dados vazios');
+        }
+    } catch (e) {
+        console.error('[INIT] ❌ Erro ao carregar dados:', e.message);
+        events = [];
+        stats = {};
     }
 }
 
-// Health check
+// ============================================
+// SALVAR DADOS NO ARQUIVO
+// ============================================
+function saveData() {
+    try {
+        const data = {
+            events: events,
+            stats: stats,
+            timestamp: new Date().toISOString()
+        };
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        console.log('[SAVE] ✅ Dados salvos no arquivo');
+    } catch (e) {
+        console.error('[SAVE] ❌ Erro ao salvar dados:', e.message);
+    }
+}
+
+// Carregar dados ao iniciar
+loadData();
+
+// ============================================
+// ENDPOINT DE POSTBACK
+// ============================================
+app.get('/api/postback', (req, res) => {
+    const {
+        ymid,
+        zone_id,
+        sub_zone_id,
+        request_var,
+        telegram_id,
+        event_type,
+        reward_event_type,
+        estimated_price
+    } = req.query;
+
+    console.log('[POSTBACK] Recebido:');
+    console.log('  - event_type:', event_type);
+    console.log('  - zone_id:', zone_id);
+    console.log('  - ymid:', ymid);
+    console.log('  - telegram_id:', telegram_id);
+    console.log('  - estimated_price:', estimated_price);
+
+    // Validação
+    if (!zone_id || !telegram_id || !event_type) {
+        console.log('[POSTBACK] ❌ Dados inválidos');
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Criar estrutura se não existir
+    if (!stats[zone_id]) {
+        stats[zone_id] = {};
+    }
+    if (!stats[zone_id][telegram_id]) {
+        stats[zone_id][telegram_id] = {
+            zone_id: zone_id,
+            telegram_id: telegram_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: 0,
+            events: []
+        };
+    }
+
+    // Atualizar estatísticas
+    const userStats = stats[zone_id][telegram_id];
+    
+    if (event_type === 'impression') {
+        userStats.total_impressions++;
+    } else if (event_type === 'click') {
+        userStats.total_clicks++;
+        userStats.total_revenue += parseFloat(estimated_price) || 0;
+    }
+
+    // Registrar evento
+    const event = {
+        timestamp: new Date().toISOString(),
+        zone_id: zone_id,
+        telegram_id: telegram_id,
+        ymid: ymid,
+        event_type: event_type,
+        estimated_price: estimated_price,
+        reward_event_type: reward_event_type
+    };
+    
+    events.push(event);
+    
+    // Salvar dados
+    saveData();
+
+    console.log('[POSTBACK] ✅ Evento armazenado com sucesso');
+    console.log('[POSTBACK] Estatísticas atualizadas para zona', zone_id);
+    console.log('[POSTBACK]   - Impressões:', userStats.total_impressions);
+    console.log('[POSTBACK]   - Cliques:', userStats.total_clicks);
+    console.log('[POSTBACK]   - Revenue:', userStats.total_revenue);
+
+    res.json({ success: true, message: 'Postback received' });
+});
+
+// ============================================
+// ENDPOINT DE STATS GLOBAL
+// ============================================
+app.get('/api/stats', (req, res) => {
+    let total_impressions = 0;
+    let total_clicks = 0;
+    let total_revenue = 0;
+
+    Object.values(stats).forEach(zone => {
+        Object.values(zone).forEach(user => {
+            total_impressions += user.total_impressions || 0;
+            total_clicks += user.total_clicks || 0;
+            total_revenue += user.total_revenue || 0;
+        });
+    });
+
+    res.json({
+        total_events: events.length,
+        total_impressions: total_impressions,
+        total_clicks: total_clicks,
+        total_revenue: total_revenue,
+        zones: Object.keys(stats)
+    });
+});
+
+// ============================================
+// ENDPOINT DE STATS POR ZONA
+// ============================================
+app.get('/api/stats/:zone_id', (req, res) => {
+    const { zone_id } = req.params;
+    
+    if (!stats[zone_id]) {
+        return res.json({
+            zone_id: zone_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: 0,
+            users: []
+        });
+    }
+
+    let total_impressions = 0;
+    let total_clicks = 0;
+    let total_revenue = 0;
+    const users = [];
+
+    Object.values(stats[zone_id]).forEach(user => {
+        total_impressions += user.total_impressions || 0;
+        total_clicks += user.total_clicks || 0;
+        total_revenue += user.total_revenue || 0;
+        users.push(user);
+    });
+
+    res.json({
+        zone_id: zone_id,
+        total_impressions: total_impressions,
+        total_clicks: total_clicks,
+        total_revenue: total_revenue,
+        users: users
+    });
+});
+
+// ============================================
+// ENDPOINT DE STATS POR USUÁRIO
+// ============================================
+app.get('/api/stats/:zone_id/:telegram_id', (req, res) => {
+    const { zone_id, telegram_id } = req.params;
+    
+    console.log(`[STATS] Buscando dados: zone_id=${zone_id}, telegram_id=${telegram_id}`);
+    
+    // Se não existir dados, retornar estrutura vazia
+    if (!stats[zone_id] || !stats[zone_id][telegram_id]) {
+        console.log(`[STATS] Nenhum dado encontrado, retornando estrutura vazia`);
+        return res.json({
+            zone_id: zone_id,
+            telegram_id: telegram_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: 0,
+            events: []
+        });
+    }
+
+    console.log(`[STATS] Dados encontrados:`, stats[zone_id][telegram_id]);
+    res.json(stats[zone_id][telegram_id]);
+});
+
+// ============================================
+// LISTAR EVENTOS
+// ============================================
+app.get('/api/events', (req, res) => {
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    const paginatedEvents = events.slice(-limit - offset, -offset || undefined).reverse();
+
+    res.json({
+        total: events.length,
+        limit: limit,
+        offset: offset,
+        events: paginatedEvents
+    });
+});
+
+// ============================================
+// DASHBOARD
+// ============================================
+app.get('/dashboard', (req, res) => {
+    let html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Monetag Postback Server - Dashboard</title>
+        <style>
+            body { font-family: Arial; margin: 20px; background: #f5f5f5; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1 { color: #333; }
+            .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }
+            .stat-box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .stat-number { font-size: 32px; font-weight: bold; color: #2196F3; }
+            .stat-label { color: #666; font-size: 14px; }
+            table { width: 100%; border-collapse: collapse; background: white; margin: 20px 0; }
+            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background: #2196F3; color: white; }
+            tr:hover { background: #f5f5f5; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📊 Monetag Postback Server - Dashboard</h1>
+            <p>Status: <strong style="color: green;">✅ Online</strong></p>
+    `;
+
+    // Estatísticas globais
+    let total_impressions = 0;
+    let total_clicks = 0;
+    let total_revenue = 0;
+
+    Object.values(stats).forEach(zone => {
+        Object.values(zone).forEach(user => {
+            total_impressions += user.total_impressions || 0;
+            total_clicks += user.total_clicks || 0;
+            total_revenue += user.total_revenue || 0;
+        });
+    });
+
+    html += `
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-number">${total_impressions}</div>
+                    <div class="stat-label">Total de Impressões</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${total_clicks}</div>
+                    <div class="stat-label">Total de Cliques</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">$${total_revenue.toFixed(4)}</div>
+                    <div class="stat-label">Revenue Total</div>
+                </div>
+            </div>
+
+            <h2>📈 Dados por Zona e Usuário</h2>
+            <table>
+                <tr>
+                    <th>Zona</th>
+                    <th>Telegram ID</th>
+                    <th>Impressões</th>
+                    <th>Cliques</th>
+                    <th>Revenue</th>
+                </tr>
+    `;
+
+    Object.entries(stats).forEach(([zone_id, zone_data]) => {
+        Object.entries(zone_data).forEach(([telegram_id, user_data]) => {
+            html += `
+                <tr>
+                    <td>${zone_id}</td>
+                    <td>${telegram_id}</td>
+                    <td>${user_data.total_impressions}</td>
+                    <td>${user_data.total_clicks}</td>
+                    <td>$${user_data.total_revenue.toFixed(4)}</td>
+                </tr>
+            `;
+        });
+    });
+
+    html += `
+            </table>
+        </div>
+    </body>
+    </html>
+    `;
+
+    res.send(html);
+});
+
+// ============================================
+// HEALTH CHECK
+// ============================================
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Receber postback via GET
-app.get('/api/postback', async (req, res) => {
-    try {
-        const {
-            event_type,
-            zone_id,
-            sub_id,
-            ymid,
-            telegram_id,
-            estimated_price,
-            request_var
-        } = req.query;
-
-        // Validar parâmetros obrigatórios
-        if (!event_type || !zone_id) {
-            return res.status(400).json({
-                success: false,
-                error: 'Parâmetros obrigatórios faltando: event_type, zone_id'
-            });
-        }
-
-        // Validar tipo de evento
-        if (!['impression', 'click'].includes(event_type)) {
-            return res.status(400).json({
-                success: false,
-                error: 'event_type deve ser "impression" ou "click"'
-            });
-        }
-
-        const connection = await pool.getConnection();
-
-        try {
-            // Inserir postback
-            const [result] = await connection.execute(
-                `INSERT INTO monetag_postbacks 
-                (event_type, zone_id, sub_id, ymid, telegram_id, estimated_price, request_var, ip_address, user_agent)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    event_type,
-                    zone_id,
-                    sub_id || 'unknown',
-                    ymid || null,
-                    telegram_id || null,
-                    estimated_price || 0,
-                    request_var || null,
-                    req.ip,
-                    req.get('user-agent')
-                ]
-            );
-
-            // Atualizar estatísticas
-            const priceValue = parseFloat(estimated_price) || 0;
-            
-            if (event_type === 'impression') {
-                await connection.execute(
-                    `INSERT INTO monetag_stats (zone_id, total_impressions, total_revenue)
-                    VALUES (?, 1, ?)
-                    ON DUPLICATE KEY UPDATE
-                    total_impressions = total_impressions + 1,
-                    total_revenue = total_revenue + ?`,
-                    [zone_id, priceValue, priceValue]
-                );
-            } else if (event_type === 'click') {
-                await connection.execute(
-                    `INSERT INTO monetag_stats (zone_id, total_clicks, total_revenue)
-                    VALUES (?, 1, ?)
-                    ON DUPLICATE KEY UPDATE
-                    total_clicks = total_clicks + 1,
-                    total_revenue = total_revenue + ?`,
-                    [zone_id, priceValue, priceValue]
-                );
-            }
-
-            console.log(`✅ [${new Date().toISOString()}] ${event_type.toUpperCase()} recebido`);
-            console.log(`   Zone ID: ${zone_id}`);
-            console.log(`   User ID: ${sub_id}`);
-            console.log(`   Revenue: $${priceValue}`);
-
-            res.json({
-                success: true,
-                message: `Postback de ${event_type} recebido com sucesso`,
-                data: {
-                    id: result.insertId,
-                    event_type,
-                    zone_id,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } finally {
-            connection.release();
-        }
-    } catch (error) {
-        console.error('❌ Erro ao processar postback:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
+// ============================================
+// INICIAR SERVIDOR
+// ============================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`\n🚀 Monetag Postback Server rodando em http://localhost:${PORT}`);
+    console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard`);
+    console.log(`📝 Dados persistidos em: ${DATA_FILE}\n`);
 });
-
-// Receber postback via POST
-app.post('/api/postback', async (req, res) => {
-    try {
-        const {
-            event_type,
-            zone_id,
-            sub_id,
-            ymid,
-            telegram_id,
-            estimated_price,
-            request_var
-        } = req.body;
-
-        // Validar parâmetros obrigatórios
-        if (!event_type || !zone_id) {
-            return res.status(400).json({
-                success: false,
-                error: 'Parâmetros obrigatórios faltando: event_type, zone_id'
-            });
-        }
-
-        // Validar tipo de evento
-        if (!['impression', 'click'].includes(event_type)) {
-            return res.status(400).json({
-                success: false,
-                error: 'event_type deve ser "impression" ou "click"'
-            });
-        }
-
-        const connection = await pool.getConnection();
-
-        try {
-            // Inserir postback
-            const [result] = await connection.execute(
-                `INSERT INTO monetag_postbacks 
-                (event_type, zone_id, sub_id, ymid, telegram_id, estimated_price, request_var, ip_address, user_agent)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    event_type,
-                    zone_id,
-                    sub_id || 'unknown',
-                    ymid || null,
-                    telegram_id || null,
-                    estimated_price || 0,
-                    request_var || null,
-                    req.ip,
-                    req.get('user-agent')
-                ]
-            );
-
-            // Atualizar estatísticas
-            const priceValue = parseFloat(estimated_price) || 0;
-            
-            if (event_type === 'impression') {
-                await connection.execute(
-                    `INSERT INTO monetag_stats (zone_id, total_impressions, total_revenue)
-                    VALUES (?, 1, ?)
-                    ON DUPLICATE KEY UPDATE
-                    total_impressions = total_impressions + 1,
-                    total_revenue = total_revenue + ?`,
-                    [zone_id, priceValue, priceValue]
-                );
-            } else if (event_type === 'click') {
-                await connection.execute(
-                    `INSERT INTO monetag_stats (zone_id, total_clicks, total_revenue)
-                    VALUES (?, 1, ?)
-                    ON DUPLICATE KEY UPDATE
-                    total_clicks = total_clicks + 1,
-                    total_revenue = total_revenue + ?`,
-                    [zone_id, priceValue, priceValue]
-                );
-            }
-
-            console.log(`✅ [${new Date().toISOString()}] ${event_type.toUpperCase()} recebido (POST)`);
-            console.log(`   Zone ID: ${zone_id}`);
-            console.log(`   User ID: ${sub_id}`);
-
-            res.json({
-                success: true,
-                message: `Postback de ${event_type} recebido com sucesso`,
-                data: {
-                    id: result.insertId,
-                    event_type,
-                    zone_id,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } finally {
-            connection.release();
-        }
-    } catch (error) {
-        console.error('❌ Erro ao processar postback:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Listar todos os eventos
-app.get('/api/events', async (req, res) => {
-    try {
-        const connection = await pool.getConnection();
-        const [events] = await connection.execute(
-            'SELECT * FROM monetag_postbacks ORDER BY created_at DESC LIMIT 100'
-        );
-        connection.release();
-
-        res.json({
-            total: events.length,
-            events
-        });
-    } catch (error) {
-        console.error('❌ Erro ao listar eventos:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Listar eventos por tipo
-app.get('/api/events/:type', async (req, res) => {
-    try {
-        const type = req.params.type;
-
-        if (!['impression', 'click'].includes(type)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Tipo deve ser "impression" ou "click"'
-            });
-        }
-
-        const connection = await pool.getConnection();
-        const [events] = await connection.execute(
-            'SELECT * FROM monetag_postbacks WHERE event_type = ? ORDER BY created_at DESC LIMIT 100',
-            [type]
-        );
-        connection.release();
-
-        res.json({
-            type,
-            total: events.length,
-            events
-        });
-    } catch (error) {
-        console.error('❌ Erro ao listar eventos:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Obter estatísticas
-app.get('/api/stats', async (req, res) => {
-    try {
-        const connection = await pool.getConnection();
-        const [stats] = await connection.execute(
-            'SELECT * FROM monetag_stats ORDER BY total_revenue DESC'
-        );
-        connection.release();
-
-        // Calcular totais
-        let totalImpressions = 0;
-        let totalClicks = 0;
-        let totalRevenue = 0;
-
-        stats.forEach(stat => {
-            totalImpressions += stat.total_impressions;
-            totalClicks += stat.total_clicks;
-            totalRevenue += parseFloat(stat.total_revenue);
-        });
-
-        const ctr = totalImpressions > 0 
-            ? ((totalClicks / totalImpressions) * 100).toFixed(2) 
-            : '0.00';
-
-        res.json({
-            summary: {
-                total_impressions: totalImpressions,
-                total_clicks: totalClicks,
-                total_revenue: totalRevenue.toFixed(6),
-                ctr: ctr + '%',
-                zones_count: stats.length
-            },
-            by_zone: stats
-        });
-    } catch (error) {
-        console.error('❌ Erro ao obter estatísticas:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Obter estatísticas por zona
-app.get('/api/stats/:zone_id', async (req, res) => {
-    try {
-        const { zone_id } = req.params;
-        const connection = await pool.getConnection();
-        
-        const [stats] = await connection.execute(
-            'SELECT * FROM monetag_stats WHERE zone_id = ?',
-            [zone_id]
-        );
-
-        connection.release();
-
-        if (stats.length === 0) {
-            return res.json({
-                zone_id,
-                total_impressions: 0,
-                total_clicks: 0,
-                total_revenue: 0,
-                ctr: '0%'
-            });
-        }
-
-        const stat = stats[0];
-        const ctr = stat.total_impressions > 0
-            ? ((stat.total_clicks / stat.total_impressions) * 100).toFixed(2)
-            : '0.00';
-
-        res.json({
-            zone_id,
-            total_impressions: stat.total_impressions,
-            total_clicks: stat.total_clicks,
-            total_revenue: stat.total_revenue,
-            ctr: ctr + '%'
-        });
-    } catch (error) {
-        console.error('❌ Erro ao obter estatísticas:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Dashboard HTML
-app.get('/dashboard', async (req, res) => {
-    try {
-        const connection = await pool.getConnection();
-        const [stats] = await connection.execute(
-            'SELECT * FROM monetag_stats ORDER BY total_revenue DESC'
-        );
-        const [recentEvents] = await connection.execute(
-            'SELECT * FROM monetag_postbacks ORDER BY created_at DESC LIMIT 20'
-        );
-        connection.release();
-
-        let totalImpressions = 0;
-        let totalClicks = 0;
-        let totalRevenue = 0;
-
-        stats.forEach(stat => {
-            totalImpressions += stat.total_impressions;
-            totalClicks += stat.total_clicks;
-            totalRevenue += parseFloat(stat.total_revenue);
-        });
-
-        const ctr = totalImpressions > 0 
-            ? ((totalClicks / totalImpressions) * 100).toFixed(2) 
-            : '0.00';
-
-        const html = `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Monetag Postback Dashboard</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        h1 {
-            color: white;
-            margin-bottom: 30px;
-            text-align: center;
-            font-size: 2.5em;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: white;
-            border-radius: 10px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            transition: transform 0.3s ease;
-        }
-        .stat-card:hover {
-            transform: translateY(-5px);
-        }
-        .stat-label {
-            color: #666;
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-        }
-        .stat-value {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #667eea;
-        }
-        .stat-unit {
-            font-size: 0.5em;
-            color: #999;
-            margin-left: 5px;
-        }
-        .table-container {
-            background: white;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th {
-            background: #667eea;
-            color: white;
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
-        }
-        td {
-            padding: 12px 15px;
-            border-bottom: 1px solid #eee;
-        }
-        tr:hover {
-            background: #f9f9f9;
-        }
-        .badge {
-            display: inline-block;
-            padding: 5px 10px;
-            border-radius: 20px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }
-        .badge-impression {
-            background: #e3f2fd;
-            color: #1976d2;
-        }
-        .badge-click {
-            background: #f3e5f5;
-            color: #7b1fa2;
-        }
-        .refresh-btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 1em;
-            margin-bottom: 20px;
-        }
-        .refresh-btn:hover {
-            background: #764ba2;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📊 Monetag Postback Dashboard</h1>
-        
-        <button class="refresh-btn" onclick="location.reload()">🔄 Atualizar</button>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Total de Impressões</div>
-                <div class="stat-value">${totalImpressions}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total de Cliques</div>
-                <div class="stat-value">${totalClicks}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Taxa de Clique (CTR)</div>
-                <div class="stat-value">${ctr}<span class="stat-unit">%</span></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Revenue Total</div>
-                <div class="stat-value">$${totalRevenue.toFixed(6)}</div>
-            </div>
-        </div>
-
-        <h2 style="color: white; margin-top: 40px; margin-bottom: 20px;">Eventos Recentes</h2>
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Tipo</th>
-                        <th>Zone ID</th>
-                        <th>User ID</th>
-                        <th>Revenue</th>
-                        <th>Data</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${recentEvents.map(event => `
-                    <tr>
-                        <td>#${event.id}</td>
-                        <td><span class="badge badge-${event.event_type}">${event.event_type.toUpperCase()}</span></td>
-                        <td>${event.zone_id}</td>
-                        <td>${event.sub_id}</td>
-                        <td>$${parseFloat(event.estimated_price).toFixed(6)}</td>
-                        <td>${new Date(event.created_at).toLocaleString('pt-BR')}</td>
-                    </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-
-        <h2 style="color: white; margin-top: 40px; margin-bottom: 20px;">Estatísticas por Zona</h2>
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Zone ID</th>
-                        <th>Impressões</th>
-                        <th>Cliques</th>
-                        <th>CTR</th>
-                        <th>Revenue</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${stats.map(stat => {
-                        const zoneCtr = stat.total_impressions > 0 
-                            ? ((stat.total_clicks / stat.total_impressions) * 100).toFixed(2)
-                            : '0.00';
-                        return `
-                        <tr>
-                            <td>${stat.zone_id}</td>
-                            <td>${stat.total_impressions}</td>
-                            <td>${stat.total_clicks}</td>
-                            <td>${zoneCtr}%</td>
-                            <td>$${parseFloat(stat.total_revenue).toFixed(6)}</td>
-                        </tr>
-                        `;
-                    }).join('')}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-
-        res.send(html);
-    } catch (error) {
-        console.error('❌ Erro ao renderizar dashboard:', error);
-        res.status(500).send('Erro ao carregar dashboard');
-    }
-});
-
-// Rota raiz
-app.get('/', (req, res) => {
-    res.json({
-        name: 'Monetag Postback Server v2',
-        version: '2.0.0',
-        database: 'MySQL',
-        endpoints: {
-            'GET /health': 'Health check',
-            'GET /api/postback?event_type=impression&zone_id=10269314&sub_id=123': 'Receber postback (GET)',
-            'POST /api/postback': 'Receber postback (POST)',
-            'GET /api/events': 'Listar últimos 100 eventos',
-            'GET /api/events/:type': 'Listar eventos por tipo (impression ou click)',
-            'GET /api/stats': 'Obter estatísticas gerais',
-            'GET /api/stats/:zone_id': 'Obter estatísticas por zona',
-            'GET /dashboard': 'Dashboard visual'
-        }
-    });
-});
-
-// Tratamento de erros 404
-app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        error: 'Rota não encontrada',
-        path: req.path
-    });
-});
-
-// Iniciar servidor
-async function start() {
-    try {
-        await initializeDatabase();
-        
-        app.listen(PORT, () => {
-            console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
-            console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard`);
-            console.log(`📈 Estatísticas: http://localhost:${PORT}/api/stats`);
-            console.log(`📋 Eventos: http://localhost:${PORT}/api/events`);
-        });
-    } catch (error) {
-        console.error('❌ Erro ao iniciar servidor:', error);
-        process.exit(1);
-    }
-}
-
-start();
