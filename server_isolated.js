@@ -446,6 +446,56 @@ app.post('/api/admin/reset/:zone_id/:ymid', (req, res) => {
 });
 
 // ============================================
+// ENDPOINT: CONTAR IMPRESSÕES E CLIQUES POR EMAIL
+// ============================================
+app.get('/api/count', (req, res) => {
+    const { email, event_type } = req.query;
+
+    console.log('[COUNT] Recebido:');
+    console.log('  - email:', email);
+    console.log('  - event_type:', event_type);
+
+    // Validação
+    if (!email || !event_type) {
+        console.log('[COUNT] ❌ Dados inválidos');
+        return res.status(400).json({ error: 'Missing required fields: email, event_type' });
+    }
+
+    // Criar estrutura se não existir
+    if (!userStats[email]) {
+        userStats[email] = {
+            email: email,
+            impressions: 0,
+            clicks: 0,
+            last_update: null
+        };
+    }
+
+    // Atualizar contagem
+    if (event_type === 'impression') {
+        userStats[email].impressions++;
+        console.log('[COUNT] ✅ Impressão contada para', email);
+    } else if (event_type === 'click') {
+        userStats[email].clicks++;
+        console.log('[COUNT] ✅ Clique contado para', email);
+    } else {
+        return res.status(400).json({ error: 'Invalid event_type. Use "impression" or "click"' });
+    }
+
+    userStats[email].last_update = new Date().toISOString();
+
+    console.log('[COUNT] Estatísticas atualizadas:');
+    console.log('  - Impressões:', userStats[email].impressions);
+    console.log('  - Cliques:', userStats[email].clicks);
+
+    res.json({ 
+        success: true, 
+        message: `${event_type} contado com sucesso`,
+        stats: userStats[email]
+    });
+});
+
+// ============================================
 // INICIAR SERVIDOR
 // ============================================
 const PORT = process.env.PORT || 8080;
