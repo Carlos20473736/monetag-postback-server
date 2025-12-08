@@ -68,6 +68,20 @@ async function createTablesIfNotExists(connection) {
             )
         `);
         console.log('[DB] ✅ Tabela monetag_events verificada/criada');
+
+        // Adicionar coluna zone_id se não existir
+        try {
+            await connection.query(`
+                ALTER TABLE monetag_events ADD COLUMN zone_id VARCHAR(100) AFTER event_type
+            `);
+            console.log('[DB] ✅ Coluna zone_id adicionada');
+        } catch (err) {
+            if (err.code === 'ER_DUP_FIELDNAME') {
+                console.log('[DB] ℹ️  Coluna zone_id já existe');
+            } else {
+                console.log('[DB] ℹ️  Coluna zone_id verificada');
+            }
+        }
     } catch (error) {
         console.error('[DB] ⚠️  Erro ao criar tabelas:', error.message);
     }
