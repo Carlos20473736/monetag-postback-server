@@ -1,0 +1,19 @@
+{
+  "events": [],
+  "stats": {},
+  "userStats": {
+    "teste@gmail.com": {
+      "email": "teste@gmail.com",
+      "impressions": 1,
+      "clicks": 0,
+      "last_update": "2025-12-08T15:00:06.377Z"
+    },
+    "test@example.com": {
+      "email": "test@example.com",
+      "impressions": 1,
+      "clicks": 0,
+      "last_update": "2025-12-08T16:12:36.855Z"
+    }
+  },
+  "timestamp": "2025-12-08T16:12:36.856Z"
+}
