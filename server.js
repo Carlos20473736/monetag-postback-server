@@ -459,6 +459,59 @@ app.post('/api/reset-user-stats', (req, res) => {
 // ============================================
 // HEALTH CHECK
 // ============================================
+// ENDPOINT: NOVO RASTREADOR DE IMPRESSÕES E CLIQUES
+// ============================================
+app.get('/api/track', (req, res) => {
+    const { email, event_type } = req.query;
+
+    console.log('[TRACK] Recebido:');
+    console.log('  - email:', email);
+    console.log('  - event_type:', event_type);
+
+    // Validação
+    if (!email || !event_type) {
+        console.log('[TRACK] ❌ Dados inválidos');
+        return res.status(400).json({ error: 'Missing required fields: email, event_type' });
+    }
+
+    // Criar estrutura se não existir
+    if (!userStats[email]) {
+        userStats[email] = {
+            email: email,
+            impressions: 0,
+            clicks: 0,
+            last_update: null
+        };
+    }
+
+    // Atualizar contagem
+    if (event_type === 'impression') {
+        userStats[email].impressions++;
+        console.log('[TRACK] ✅ Impressão contada para', email);
+    } else if (event_type === 'click') {
+        userStats[email].clicks++;
+        console.log('[TRACK] ✅ Clique contado para', email);
+    } else {
+        return res.status(400).json({ error: 'Invalid event_type. Use "impression" or "click"' });
+    }
+
+    userStats[email].last_update = new Date().toISOString();
+
+    // Salvar dados
+    saveData();
+
+    console.log('[TRACK] Estatísticas atualizadas:');
+    console.log('  - Impressões:', userStats[email].impressions);
+    console.log('  - Cliques:', userStats[email].clicks);
+
+    res.json({ 
+        success: true, 
+        message: `${event_type} rastreado com sucesso`,
+        stats: userStats[email]
+    });
+});
+
+// ============================================
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
