@@ -13,6 +13,34 @@ app.use(express.urlencoded({ extended: true }));
 let pool = null;
 let dbInitialized = false;
 
+// Função para criar banco de dados
+async function createDatabase() {
+    try {
+        console.log('[DB] Criando banco de dados...');
+        
+        const tempPool = mysql.createPool({
+            host: process.env.DB_HOST || 'mysql',
+            user: process.env.DB_USER || 'root',
+            password: process.env.DB_PASSWORD || '',
+            waitForConnections: true,
+            connectionLimit: 5,
+            queueLimit: 0
+        });
+
+        const connection = await tempPool.getConnection();
+        
+        try {
+            await connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME || 'monetag_tracking'}`);
+            console.log('[DB] ✅ Banco de dados criado/verificado!');
+        } finally {
+            connection.release();
+            await tempPool.end();
+        }
+    } catch (error) {
+        console.error('[DB] ⚠️  Erro ao criar banco (pode já existir):', error.message);
+    }
+}
+
 // Função para criar pool de conexões
 async function createPool() {
     if (pool) return pool;
@@ -336,6 +364,9 @@ const PORT = process.env.PORT || 3000;
 
 async function startServer() {
     try {
+        // Criar banco de dados
+        await createDatabase();
+
         // Criar pool de conexões
         await createPool();
 
