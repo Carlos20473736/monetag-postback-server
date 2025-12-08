@@ -247,28 +247,24 @@ app.get('/api/user/:email', async (req, res) => {
         const connection = await pool.getConnection();
 
         try {
-            const [users] = await connection.query(
-                'SELECT email, total_impressions, total_clicks, total_earnings FROM users WHERE email = ?',
+            const [stats] = await connection.query(
+                `SELECT 
+                    COUNT(CASE WHEN event_type = 'impression' THEN 1 END) as total_impressions,
+                    COUNT(CASE WHEN event_type = 'click' THEN 1 END) as total_clicks,
+                    SUM(estimated_price) as total_earnings
+                FROM tracking_events
+                WHERE user_email = ?`,
                 [email]
             );
 
-            if (users.length === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Usuário não encontrado'
-                });
-            }
-
-            const user = users[0];
+            const stat = stats[0] || { total_impressions: 0, total_clicks: 0, total_earnings: 0 };
 
             res.json({
                 success: true,
-                user: {
-                    email: user.email,
-                    impressions: user.total_impressions,
-                    clicks: user.total_clicks,
-                    earnings: user.total_earnings
-                }
+                email: email,
+                total_impressions: stat.total_impressions || 0,
+                total_clicks: stat.total_clicks || 0,
+                total_earnings: stat.total_earnings || 0
             });
         } finally {
             connection.release();
