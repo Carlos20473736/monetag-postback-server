@@ -11,81 +11,20 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 let pool = null;
+let dbInitialized = false;
 
-// Função para inicializar o banco de dados
-async function initializeDatabase() {
+// Função para criar pool de conexões
+async function createPool() {
+    if (pool) return pool;
+
     try {
-        console.log('[DB] Tentando conectar ao banco de dados...');
-        
-        const connection = await mysql.createConnection({
-            host: process.env.DB_HOST || 'localhost',
-            user: process.env.DB_USER || 'root',
-            password: process.env.DB_PASSWORD || '',
-            database: process.env.DB_NAME || 'monetag_tracking'
-        });
+        console.log('[DB] Criando pool de conexões...');
+        console.log('[DB] Host:', process.env.DB_HOST);
+        console.log('[DB] User:', process.env.DB_USER);
+        console.log('[DB] Database:', process.env.DB_NAME);
 
-        console.log('[DB] ✅ Conexão estabelecida com sucesso!');
-
-        // Criar tabelas se não existirem
-        const createTablesQuery = `
-            CREATE TABLE IF NOT EXISTS tracking_events (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                event_type VARCHAR(50) NOT NULL,
-                zone_id VARCHAR(50) NOT NULL,
-                user_id VARCHAR(100) NOT NULL,
-                user_email VARCHAR(255),
-                estimated_price DECIMAL(10, 4) DEFAULT 0.00,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_event_type (event_type),
-                INDEX idx_zone_id (zone_id),
-                INDEX idx_user_id (user_id),
-                INDEX idx_created_at (created_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-            CREATE TABLE IF NOT EXISTS daily_stats (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                zone_id VARCHAR(50) NOT NULL,
-                event_date DATE NOT NULL,
-                impressions INT DEFAULT 0,
-                clicks INT DEFAULT 0,
-                total_revenue DECIMAL(10, 4) DEFAULT 0.00,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY unique_zone_date (zone_id, event_date)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id VARCHAR(100) NOT NULL UNIQUE,
-                email VARCHAR(255),
-                first_name VARCHAR(100),
-                last_name VARCHAR(100),
-                total_impressions INT DEFAULT 0,
-                total_clicks INT DEFAULT 0,
-                total_earnings DECIMAL(10, 4) DEFAULT 0.00,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_user_id (user_id),
-                INDEX idx_email (email)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-        `;
-
-        // Executar cada CREATE TABLE separadamente
-        const tables = createTablesQuery.split(';').filter(t => t.trim());
-        for (const table of tables) {
-            if (table.trim()) {
-                await connection.execute(table);
-            }
-        }
-
-        console.log('[DB] ✅ Tabelas criadas/verificadas com sucesso!');
-
-        await connection.end();
-
-        // Criar pool de conexões
         pool = mysql.createPool({
-            host: process.env.DB_HOST || 'localhost',
+            host: process.env.DB_HOST || 'mysql',
             user: process.env.DB_USER || 'root',
             password: process.env.DB_PASSWORD || '',
             database: process.env.DB_NAME || 'monetag_tracking',
@@ -96,28 +35,134 @@ async function initializeDatabase() {
             keepAliveInitialDelayMs: 0
         });
 
-        console.log('[DB] ✅ Pool de conexões criado com sucesso!');
-        return true;
+        console.log('[DB] ✅ Pool de conexões criado!');
+        return pool;
+    } catch (error) {
+        console.error('[DB] ❌ Erro ao criar pool:', error.message);
+        pool = null;
+        throw error;
+    }
+}
+
+// Função para inicializar banco de dados (criar tabelas)
+async function initializeDatabase() {
+    if (dbInitialized) return true;
+
+    try {
+        if (!pool) {
+            await createPool();
+        }
+
+        console.log('[DB] Inicializando banco de dados...');
+
+        const connection = await pool.getConnection();
+
+        try {
+            // Criar tabelas se não existirem
+            const createTablesQuery = `
+                CREATE TABLE IF NOT EXISTS tracking_events (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    event_type VARCHAR(50) NOT NULL,
+                    zone_id VARCHAR(50) NOT NULL,
+                    user_id VARCHAR(100) NOT NULL,
+                    user_email VARCHAR(255),
+                    estimated_price DECIMAL(10, 4) DEFAULT 0.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_event_type (event_type),
+                    INDEX idx_zone_id (zone_id),
+                    INDEX idx_user_id (user_id),
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+                CREATE TABLE IF NOT EXISTS daily_stats (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    zone_id VARCHAR(50) NOT NULL,
+                    event_date DATE NOT NULL,
+                    impressions INT DEFAULT 0,
+                    clicks INT DEFAULT 0,
+                    total_revenue DECIMAL(10, 4) DEFAULT 0.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_zone_date (zone_id, event_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id VARCHAR(100) NOT NULL UNIQUE,
+                    email VARCHAR(255),
+                    first_name VARCHAR(100),
+                    last_name VARCHAR(100),
+                    total_impressions INT DEFAULT 0,
+                    total_clicks INT DEFAULT 0,
+                    total_earnings DECIMAL(10, 4) DEFAULT 0.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id),
+                    INDEX idx_email (email)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            `;
+
+            // Executar cada CREATE TABLE separadamente
+            const tables = createTablesQuery.split(';').filter(t => t.trim());
+            for (const table of tables) {
+                if (table.trim()) {
+                    await connection.execute(table);
+                }
+            }
+
+            console.log('[DB] ✅ Tabelas criadas/verificadas com sucesso!');
+            dbInitialized = true;
+            return true;
+
+        } finally {
+            connection.release();
+        }
 
     } catch (error) {
-        console.error('[DB] ❌ Erro ao inicializar banco de dados:', error.message);
-        console.error('[DB] Detalhes:', error);
+        console.error('[DB] ⚠️  Erro ao inicializar banco:', error.message);
+        // Não falhar completamente, apenas avisar
         return false;
     }
 }
 
 // Health check
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        timestamp: new Date().toISOString(),
-        database: pool ? 'connected' : 'disconnected'
-    });
+app.get('/health', async (req, res) => {
+    try {
+        // Tentar criar pool se não existir
+        if (!pool) {
+            await createPool();
+        }
+
+        res.json({ 
+            status: 'OK', 
+            timestamp: new Date().toISOString(),
+            database: pool ? 'connected' : 'disconnected',
+            initialized: dbInitialized
+        });
+    } catch (error) {
+        res.json({ 
+            status: 'OK', 
+            timestamp: new Date().toISOString(),
+            database: 'error',
+            error: error.message
+        });
+    }
 });
 
 // Endpoint para receber postbacks de impressões e cliques
 app.get('/api/postback', async (req, res) => {
     try {
+        // Tentar criar pool se não existir
+        if (!pool) {
+            await createPool();
+        }
+
+        // Tentar inicializar banco se não foi inicializado
+        if (!dbInitialized) {
+            await initializeDatabase();
+        }
+
         if (!pool) {
             return res.status(503).json({
                 success: false,
@@ -190,6 +235,16 @@ app.get('/api/postback', async (req, res) => {
 // Endpoint para obter estatísticas
 app.get('/api/stats/:zone_id', async (req, res) => {
     try {
+        // Tentar criar pool se não existir
+        if (!pool) {
+            await createPool();
+        }
+
+        // Tentar inicializar banco se não foi inicializado
+        if (!dbInitialized) {
+            await initializeDatabase();
+        }
+
         if (!pool) {
             return res.status(503).json({
                 success: false,
@@ -257,6 +312,16 @@ app.get('/api/stats/:zone_id', async (req, res) => {
 // Endpoint para obter todos os eventos de um usuário
 app.get('/api/events/:user_id', async (req, res) => {
     try {
+        // Tentar criar pool se não existir
+        if (!pool) {
+            await createPool();
+        }
+
+        // Tentar inicializar banco se não foi inicializado
+        if (!dbInitialized) {
+            await initializeDatabase();
+        }
+
         if (!pool) {
             return res.status(503).json({
                 success: false,
@@ -311,6 +376,11 @@ app.post('/api/reset', async (req, res) => {
             });
         }
 
+        // Tentar criar pool se não existir
+        if (!pool) {
+            await createPool();
+        }
+
         if (!pool) {
             return res.status(503).json({
                 success: false,
@@ -346,12 +416,19 @@ app.post('/api/reset', async (req, res) => {
 async function startServer() {
     const PORT = process.env.PORT || 3000;
 
-    // Inicializar banco de dados
-    const dbInitialized = await initializeDatabase();
+    console.log('\n🚀 Iniciando Monetag Postback Server...');
+    console.log(`📍 Porta: ${PORT}`);
+    console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🗄️  DB Host: ${process.env.DB_HOST || 'mysql'}`);
+    console.log(`📦 Database: ${process.env.DB_NAME || 'monetag_tracking'}\n`);
 
-    if (!dbInitialized) {
-        console.error('[SERVER] ❌ Falha ao inicializar banco de dados. Saindo...');
-        process.exit(1);
+    // Tentar criar pool na inicialização (mas não falhar se não conseguir)
+    try {
+        await createPool();
+        console.log('[DB] ✅ Pool de conexões criado na inicialização');
+    } catch (error) {
+        console.log('[DB] ⚠️  Não foi possível criar pool na inicialização');
+        console.log('[DB] O pool será criado sob demanda quando uma requisição chegar');
     }
 
     app.listen(PORT, () => {
@@ -359,10 +436,7 @@ async function startServer() {
         console.log(`📍 Health check: http://localhost:${PORT}/health`);
         console.log(`📊 Postback endpoint: http://localhost:${PORT}/api/postback`);
         console.log(`📈 Stats endpoint: http://localhost:${PORT}/api/stats/:zone_id`);
-        console.log(`📝 Events endpoint: http://localhost:${PORT}/api/events/:user_id`);
-        console.log(`\n🗄️  Banco de dados: ${process.env.DB_HOST || 'localhost'}`);
-        console.log(`📦 Database: ${process.env.DB_NAME || 'monetag_tracking'}`);
-        console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}\n`);
+        console.log(`📝 Events endpoint: http://localhost:${PORT}/api/events/:user_id\n`);
     });
 }
 
@@ -373,13 +447,13 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error) => {
     console.error('[ERROR] Uncaught Exception:', error);
-    process.exit(1);
+    // Não sair do processo, apenas logar
 });
 
 // Iniciar servidor
 startServer().catch(error => {
     console.error('[SERVER] ❌ Erro ao iniciar servidor:', error);
-    process.exit(1);
+    // Não sair, tentar continuar mesmo com erro
 });
 
 module.exports = app;
