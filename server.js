@@ -212,10 +212,23 @@ app.post('/api/track', async (req, res) => {
                 console.log('[TRACK] Novo usuário criado:', user_email);
             }
 
-            // Inserir evento - usar session_id para armazenar o email
+            // Primeiro, criar o usuario na tabela users se nao existir
+            const [userCheck] = await connection.query('SELECT id FROM users WHERE email = ?', [user_email]);
+            let userId = 1;
+            if (userCheck.length === 0) {
+                const [userInsert] = await connection.query(
+                    'INSERT INTO users (email) VALUES (?)',
+                    [user_email]
+                );
+                userId = userInsert.insertId;
+            } else {
+                userId = userCheck[0].id;
+            }
+
+            // Inserir evento
             const [result] = await connection.query(
                 'INSERT INTO monetag_events (user_id, event_type, revenue, session_id) VALUES (?, ?, ?, ?)',
-                [1, event_type, estimated_price || 0, user_email]
+                [userId, event_type, estimated_price || 0, user_email]
             );
 
             // Estatísticas são calculadas dinamicamente da tabela monetag_events
