@@ -282,7 +282,69 @@ app.get('/api/stats/:zone_id', async (req, res) => {
 });
 
 // ========================================
-// OBTER ESTATÍSTICAS GLOBAIS
+// OBTER ESTATu00cdSTICAS POR USUu00c1RIO (YMID)
+// ========================================
+app.get('/api/stats/user/:ymid', async (req, res) => {
+    const { ymid } = req.params;
+
+    if (!pool) {
+        console.log('[STATS] Banco nao conectado');
+        return res.status(200).json({
+            success: true,
+            ymid: ymid,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: '0.0000'
+        });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+
+        const [impressions] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND ymid = ?',
+            [ymid]
+        );
+
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND ymid = ?',
+            [ymid]
+        );
+
+        const [revenue] = await connection.query(
+            'SELECT SUM(estimated_price) as total FROM monetag_postbacks WHERE ymid = ?',
+            [ymid]
+        );
+
+        connection.release();
+
+        const totalImpressions = impressions[0]?.count || 0;
+        const totalClicks = clicks[0]?.count || 0;
+        const totalRevenue = revenue[0]?.total || 0;
+
+        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}`);
+
+        res.json({
+            success: true,
+            ymid: ymid,
+            total_impressions: totalImpressions,
+            total_clicks: totalClicks,
+            total_revenue: parseFloat(totalRevenue).toFixed(4)
+        });
+    } catch (error) {
+        console.error('[STATS] Erro ao buscar stats do usuario:', error.message);
+        res.status(200).json({
+            success: true,
+            ymid: ymid,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: '0.0000'
+        });
+    }
+});
+
+// ========================================
+// OBTER ESTATu00cdSTICAS GLOBAIS
 // ========================================
 app.get('/api/stats', async (req, res) => {
     if (!pool) {
