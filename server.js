@@ -212,10 +212,10 @@ app.post('/api/track', async (req, res) => {
                 console.log('[TRACK] Novo usuário criado:', user_email);
             }
 
-            // Inserir evento
+            // Inserir evento - usar session_id para armazenar o email
             const [result] = await connection.query(
-                'INSERT INTO monetag_events (user_id, event_type, revenue) VALUES (?, ?, ?)',
-                [user_email, event_type, estimated_price || 0]
+                'INSERT INTO monetag_events (user_id, event_type, revenue, session_id) VALUES (?, ?, ?, ?)',
+                [1, event_type, estimated_price || 0, user_email]
             );
 
             // Estatísticas são calculadas dinamicamente da tabela monetag_events
@@ -260,7 +260,7 @@ app.get('/api/user/:email', async (req, res) => {
                     COUNT(CASE WHEN event_type = 'click' THEN 1 END) as total_clicks,
                     SUM(revenue) as total_earnings
                 FROM monetag_events
-                WHERE user_id = ?`,
+                WHERE session_id = ?`,
                 [email]
             );
 
