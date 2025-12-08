@@ -218,18 +218,8 @@ app.post('/api/track', async (req, res) => {
                 [user_email, event_type, estimated_price || 0]
             );
 
-            // Atualizar estatísticas do usuário
-            if (event_type === 'impression') {
-                await connection.query(
-                    'UPDATE users SET total_impressions = total_impressions + 1, total_earnings = total_earnings + ? WHERE email = ?',
-                    [estimated_price || 0, user_email]
-                );
-            } else if (event_type === 'click') {
-                await connection.query(
-                    'UPDATE users SET total_clicks = total_clicks + 1, total_earnings = total_earnings + ? WHERE email = ?',
-                    [estimated_price || 0, user_email]
-                );
-            }
+            // Estatísticas são calculadas dinamicamente da tabela monetag_events
+            // Não precisa atualizar users
 
             res.json({
                 success: true,
