@@ -35,7 +35,7 @@ async function initializeDatabase() {
         const connection = await pool.getConnection();
         console.log('[DB] ✅ Conectado ao banco de dados:', process.env.DB_NAME);
         
-        // Criar tabela se não existir
+        // Criar tabelas se não existirem
         await createTablesIfNotExists(connection);
         
         connection.release();
@@ -52,36 +52,24 @@ async function initializeDatabase() {
 // ========================================
 async function createTablesIfNotExists(connection) {
     try {
-        // Tabela para rastreamento global (sem email)
+        // Tabela para rastreamento de eventos
         await connection.query(`
             CREATE TABLE IF NOT EXISTS monetag_events (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 event_type VARCHAR(50) NOT NULL,
                 zone_id VARCHAR(100),
-                session_id VARCHAR(100),
-                revenue DECIMAL(10, 4) DEFAULT 0,
+                ymid VARCHAR(100),
+                user_email VARCHAR(255),
+                estimated_price DECIMAL(10, 4) DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_event_type (event_type),
                 INDEX idx_zone_id (zone_id),
-                INDEX idx_session_id (session_id),
+                INDEX idx_ymid (ymid),
+                INDEX idx_user_email (user_email),
                 INDEX idx_created_at (created_at)
             )
         `);
         console.log('[DB] ✅ Tabela monetag_events verificada/criada');
-
-        // Adicionar coluna zone_id se não existir
-        try {
-            await connection.query(`
-                ALTER TABLE monetag_events ADD COLUMN zone_id VARCHAR(100) AFTER event_type
-            `);
-            console.log('[DB] ✅ Coluna zone_id adicionada');
-        } catch (err) {
-            if (err.code === 'ER_DUP_FIELDNAME') {
-                console.log('[DB] ℹ️  Coluna zone_id já existe');
-            } else {
-                console.log('[DB] ℹ️  Coluna zone_id verificada');
-            }
-        }
     } catch (error) {
         console.error('[DB] ⚠️  Erro ao criar tabelas:', error.message);
     }
@@ -96,49 +84,58 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
-        database: pool ? 'connected' : 'disconnected',
-        mode: 'global-tracking'
+        database: pool ? 'connected' : 'disconnected'
     });
 });
 
 // ========================================
-// ENDPOINT DE POSTBACK (GLOBAL - SEM EMAIL)
+// ENDPOINT DE POSTBACK (GET com query params)
 // ========================================
-app.post('/api/postback', async (req, res) => {
+app.get('/api/postback', async (req, res) => {
     if (!pool) {
         console.log('[POSTBACK] ⚠️  Banco de dados não conectado');
         return res.status(200).json({ success: true, message: 'Postback recebido (offline)' });
     }
 
-    const { event_type, zone_id, session_id, estimated_price, revenue } = req.body;
+    // Extrair parâmetros da query string
+    const { event_type, zone_id, ymid, user_email, estimated_price } = req.query;
+
+    // Log dos parâmetros recebidos
+    console.log('[POSTBACK] 📥 Recebido:');
+    console.log('[POSTBACK]   - event_type:', event_type);
+    console.log('[POSTBACK]   - zone_id:', zone_id);
+    console.log('[POSTBACK]   - ymid:', ymid);
+    console.log('[POSTBACK]   - user_email:', user_email);
+    console.log('[POSTBACK]   - estimated_price:', estimated_price);
 
     // Validar dados obrigatórios
     if (!event_type || !zone_id) {
-        console.log('[POSTBACK] ❌ Dados inválidos:', { event_type, zone_id });
+        console.log('[POSTBACK] ❌ Dados inválidos - faltam event_type ou zone_id');
         return res.status(200).json({ success: true, message: 'Postback recebido' });
     }
 
     try {
         const connection = await pool.getConnection();
 
-        // Inserir evento na tabela monetag_events (tracking global)
-        const finalRevenue = estimated_price || revenue || 0;
-        const finalSessionId = session_id || zone_id;
-
+        // Inserir evento na tabela
+        const finalPrice = estimated_price || 0;
+        
         await connection.query(
-            'INSERT INTO monetag_events (event_type, zone_id, session_id, revenue) VALUES (?, ?, ?, ?)',
-            [event_type, zone_id, finalSessionId, finalRevenue]
+            'INSERT INTO monetag_events (event_type, zone_id, ymid, user_email, estimated_price) VALUES (?, ?, ?, ?, ?)',
+            [event_type, zone_id, ymid || null, user_email || null, finalPrice]
         );
 
-        console.log(`[POSTBACK] ✅ ${event_type.toUpperCase()} registrado | Zona: ${zone_id} | Sessão: ${finalSessionId} | Receita: ${finalRevenue}`);
+        console.log(`[POSTBACK] ✅ ${event_type.toUpperCase()} registrado`);
+        console.log(`[POSTBACK]   - Zona: ${zone_id}`);
+        console.log(`[POSTBACK]   - User: ${user_email || ymid || 'anonymous'}`);
+        console.log(`[POSTBACK]   - Preço: ${finalPrice}`);
 
         connection.release();
 
-        // Retornar sempre 200 para não quebrar o fluxo do cliente
+        // Retornar sempre 200 OK
         res.status(200).json({
             success: true,
-            message: `${event_type} registrado com sucesso`,
-            mode: 'global-tracking'
+            message: `${event_type} registrado com sucesso`
         });
     } catch (error) {
         console.error('[POSTBACK] ❌ Erro ao registrar evento:', error.message);
@@ -151,15 +148,15 @@ app.post('/api/postback', async (req, res) => {
 });
 
 // ========================================
-// ENDPOINT DE RASTREAMENTO (COMPATÍVEL COM CLIENTE)
+// ENDPOINT DE POSTBACK (POST alternativo)
 // ========================================
-app.post('/api/track', async (req, res) => {
+app.post('/api/postback', async (req, res) => {
     if (!pool) {
-        console.log('[TRACK] ⚠️  Banco de dados não conectado');
+        console.log('[POSTBACK] ⚠️  Banco de dados não conectado');
         return res.status(200).json({ success: true });
     }
 
-    const { event_type, zone_id, session_id, estimated_price, revenue } = req.body;
+    const { event_type, zone_id, ymid, user_email, estimated_price } = req.body;
 
     if (!event_type || !zone_id) {
         return res.status(200).json({ success: true });
@@ -168,15 +165,49 @@ app.post('/api/track', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
-        const finalRevenue = estimated_price || revenue || 0;
-        const finalSessionId = session_id || zone_id;
-
+        const finalPrice = estimated_price || 0;
+        
         await connection.query(
-            'INSERT INTO monetag_events (event_type, zone_id, session_id, revenue) VALUES (?, ?, ?, ?)',
-            [event_type, zone_id, finalSessionId, finalRevenue]
+            'INSERT INTO monetag_events (event_type, zone_id, ymid, user_email, estimated_price) VALUES (?, ?, ?, ?, ?)',
+            [event_type, zone_id, ymid || null, user_email || null, finalPrice]
         );
 
-        console.log(`[TRACK] ✅ ${event_type} | Zona: ${zone_id}`);
+        console.log(`[POSTBACK] ✅ ${event_type} registrado (POST)`);
+
+        connection.release();
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('[POSTBACK] ❌ Erro:', error.message);
+        res.status(200).json({ success: true });
+    }
+});
+
+// ========================================
+// ENDPOINT DE RASTREAMENTO
+// ========================================
+app.get('/api/track', async (req, res) => {
+    if (!pool) {
+        return res.status(200).json({ success: true });
+    }
+
+    const { event_type, zone_id, ymid, user_email, estimated_price } = req.query;
+
+    if (!event_type || !zone_id) {
+        return res.status(200).json({ success: true });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+
+        const finalPrice = estimated_price || 0;
+        
+        await connection.query(
+            'INSERT INTO monetag_events (event_type, zone_id, ymid, user_email, estimated_price) VALUES (?, ?, ?, ?, ?)',
+            [event_type, zone_id, ymid || null, user_email || null, finalPrice]
+        );
+
+        console.log(`[TRACK] ✅ ${event_type} registrado`);
 
         connection.release();
 
@@ -184,60 +215,6 @@ app.post('/api/track', async (req, res) => {
     } catch (error) {
         console.error('[TRACK] ❌ Erro:', error.message);
         res.status(200).json({ success: true });
-    }
-});
-
-// ========================================
-// OBTER ESTATÍSTICAS GLOBAIS
-// ========================================
-app.get('/api/stats', async (req, res) => {
-    if (!pool) {
-        return res.status(200).json({
-            success: true,
-            total_impressions: 0,
-            total_clicks: 0,
-            total_earnings: '0.0000'
-        });
-    }
-
-    try {
-        const connection = await pool.getConnection();
-
-        // Contar impressões e cliques globais
-        const [impressions] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression"'
-        );
-
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click"'
-        );
-
-        const [revenue] = await connection.query(
-            'SELECT SUM(revenue) as total FROM monetag_events'
-        );
-
-        connection.release();
-
-        const totalImpressions = impressions[0]?.count || 0;
-        const totalClicks = clicks[0]?.count || 0;
-        const totalRevenue = revenue[0]?.total || 0;
-
-        console.log(`[STATS] Global: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
-
-        res.json({
-            success: true,
-            total_impressions: totalImpressions,
-            total_clicks: totalClicks,
-            total_earnings: parseFloat(totalRevenue).toFixed(4)
-        });
-    } catch (error) {
-        console.error('[STATS] ❌ Erro ao buscar estatísticas globais:', error.message);
-        res.status(200).json({
-            success: true,
-            total_impressions: 0,
-            total_clicks: 0,
-            total_earnings: '0.0000'
-        });
     }
 });
 
@@ -251,7 +228,7 @@ app.get('/api/stats/:zone_id', async (req, res) => {
             zone_id: req.params.zone_id,
             total_impressions: 0,
             total_clicks: 0,
-            total_earnings: '0.0000'
+            total_revenue: '0.0000'
         });
     }
 
@@ -260,19 +237,21 @@ app.get('/api/stats/:zone_id', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
-        // Contar impressões e cliques por zona
+        // Contar impressões
         const [impressions] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression" AND zone_id = ?',
             [zone_id]
         );
 
+        // Contar cliques
         const [clicks] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click" AND zone_id = ?',
             [zone_id]
         );
 
+        // Somar receita
         const [revenue] = await connection.query(
-            'SELECT SUM(revenue) as total FROM monetag_events WHERE zone_id = ?',
+            'SELECT SUM(estimated_price) as total FROM monetag_events WHERE zone_id = ?',
             [zone_id]
         );
 
@@ -289,7 +268,7 @@ app.get('/api/stats/:zone_id', async (req, res) => {
             zone_id: zone_id,
             total_impressions: totalImpressions,
             total_clicks: totalClicks,
-            total_earnings: parseFloat(totalRevenue).toFixed(4)
+            total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
         console.error('[STATS] ❌ Erro ao buscar estatísticas da zona:', error.message);
@@ -298,7 +277,127 @@ app.get('/api/stats/:zone_id', async (req, res) => {
             zone_id: zone_id,
             total_impressions: 0,
             total_clicks: 0,
-            total_earnings: '0.0000'
+            total_revenue: '0.0000'
+        });
+    }
+});
+
+// ========================================
+// OBTER ESTATÍSTICAS GLOBAIS
+// ========================================
+app.get('/api/stats', async (req, res) => {
+    if (!pool) {
+        return res.status(200).json({
+            success: true,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: '0.0000'
+        });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+
+        // Contar impressões globais
+        const [impressions] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression"'
+        );
+
+        // Contar cliques globais
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click"'
+        );
+
+        // Somar receita global
+        const [revenue] = await connection.query(
+            'SELECT SUM(estimated_price) as total FROM monetag_events'
+        );
+
+        connection.release();
+
+        const totalImpressions = impressions[0]?.count || 0;
+        const totalClicks = clicks[0]?.count || 0;
+        const totalRevenue = revenue[0]?.total || 0;
+
+        console.log(`[STATS] Global: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
+
+        res.json({
+            success: true,
+            total_impressions: totalImpressions,
+            total_clicks: totalClicks,
+            total_revenue: parseFloat(totalRevenue).toFixed(4)
+        });
+    } catch (error) {
+        console.error('[STATS] ❌ Erro ao buscar estatísticas globais:', error.message);
+        res.status(200).json({
+            success: true,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: '0.0000'
+        });
+    }
+});
+
+// ========================================
+// OBTER ESTATÍSTICAS POR USUÁRIO
+// ========================================
+app.get('/api/stats/user/:ymid', async (req, res) => {
+    if (!pool) {
+        return res.status(200).json({
+            success: true,
+            ymid: req.params.ymid,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: '0.0000'
+        });
+    }
+
+    const { ymid } = req.params;
+
+    try {
+        const connection = await pool.getConnection();
+
+        // Contar impressões do usuário
+        const [impressions] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression" AND ymid = ?',
+            [ymid]
+        );
+
+        // Contar cliques do usuário
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click" AND ymid = ?',
+            [ymid]
+        );
+
+        // Somar receita do usuário
+        const [revenue] = await connection.query(
+            'SELECT SUM(estimated_price) as total FROM monetag_events WHERE ymid = ?',
+            [ymid]
+        );
+
+        connection.release();
+
+        const totalImpressions = impressions[0]?.count || 0;
+        const totalClicks = clicks[0]?.count || 0;
+        const totalRevenue = revenue[0]?.total || 0;
+
+        console.log(`[STATS] Usuário ${ymid}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
+
+        res.json({
+            success: true,
+            ymid: ymid,
+            total_impressions: totalImpressions,
+            total_clicks: totalClicks,
+            total_revenue: parseFloat(totalRevenue).toFixed(4)
+        });
+    } catch (error) {
+        console.error('[STATS] ❌ Erro ao buscar estatísticas do usuário:', error.message);
+        res.status(200).json({
+            success: true,
+            ymid: ymid,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_revenue: '0.0000'
         });
     }
 });
@@ -315,17 +414,18 @@ async function startServer() {
     }
 
     app.listen(PORT, () => {
-        console.log(`\n${'='.repeat(50)}`);
+        console.log(`\n${'='.repeat(60)}`);
         console.log(`🚀 Servidor Monetag Postback iniciado na porta ${PORT}`);
-        console.log(`📊 Modo: TRACKING GLOBAL (sem email)`);
+        console.log(`📊 Modo: Rastreamento com ymid e user_email`);
         console.log(`🗄️  Banco de dados: ${process.env.DB_NAME || 'railway'}`);
-        console.log(`${'='.repeat(50)}`);
+        console.log(`${'='.repeat(60)}`);
         console.log(`\n✅ Endpoints disponíveis:`);
         console.log(`   - GET  /health`);
-        console.log(`   - POST /api/postback (RECOMENDADO - tracking global)`);
-        console.log(`   - POST /api/track (alternativo)`);
+        console.log(`   - GET  /api/postback?event_type=impression&zone_id=10269314&ymid=USER&user_email=EMAIL&estimated_price=0.0023`);
+        console.log(`   - POST /api/postback (JSON body)`);
         console.log(`   - GET  /api/stats (estatísticas globais)`);
         console.log(`   - GET  /api/stats/:zone_id (estatísticas por zona)`);
+        console.log(`   - GET  /api/stats/user/:ymid (estatísticas por usuário)`);
         console.log(`\n`);
     });
 }
