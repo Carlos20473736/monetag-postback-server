@@ -179,63 +179,24 @@ app.get('/api/postback', async (req, res) => {
 // ========================================
 app.get('/api/events', async (req, res) => {
     const sinceId = parseInt(req.query.since_id) || 0;
-    const zoneId = req.query.zone_id || '10269314';
 
-    if (!pool) {
-        console.log('[EVENTS] Banco nao conectado');
-        return res.json({
-            success: true,
-            last_event_id: sinceId,
-            events: [],
-            count: 0
+    const newEvents = eventLog.events.filter(e => e.id > sinceId);
+
+    if (newEvents.length > 0) {
+        console.log(`[EVENTS] ${newEvents.length} novo(s) evento(s) detectado(s)`);
+        newEvents.forEach(e => {
+            console.log(`[EVENTS]   - ${e.event_type.toUpperCase()} (ID: ${e.id})`);
         });
+    } else {
+        console.log(`[EVENTS] Nenhum novo evento desde ID ${sinceId}`);
     }
 
-    try {
-        const connection = await pool.getConnection();
-
-        const [events] = await connection.query(
-            'SELECT id, event_type, zone_id, ymid, estimated_price, created_at FROM monetag_postbacks WHERE zone_id = ? AND id > ? ORDER BY id ASC',
-            [zoneId, sinceId]
-        );
-
-        connection.release();
-
-        const sortedEvents = events.map(e => ({
-            id: e.id,
-            event_type: e.event_type,
-            zone_id: e.zone_id,
-            ymid: e.ymid,
-            estimated_price: e.estimated_price,
-            timestamp: e.created_at
-        }));
-
-        const maxId = sortedEvents.length > 0 ? sortedEvents[sortedEvents.length - 1].id : sinceId;
-
-        if (sortedEvents.length > 0) {
-            console.log(`[EVENTS] ${sortedEvents.length} novo(s) evento(s)`);
-            sortedEvents.forEach(e => {
-                console.log(`[EVENTS]   - ${e.event_type.toUpperCase()} (ID: ${e.id})`);
-            });
-        } else {
-            console.log(`[EVENTS] Nenhum evento desde ID ${sinceId}`);
-        }
-
-        res.json({
-            success: true,
-            last_event_id: maxId,
-            events: sortedEvents,
-            count: sortedEvents.length
-        });
-    } catch (error) {
-        console.error('[EVENTS] Erro:', error.message);
-        res.json({
-            success: true,
-            last_event_id: sinceId,
-            events: [],
-            count: 0
-        });
-    }
+    res.json({
+        success: true,
+        last_event_id: eventLog.lastEventId,
+        events: newEvents,
+        count: newEvents.length
+    });
 });
 
 app.get('/api/events/latest', async (req, res) => {
