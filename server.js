@@ -58,9 +58,17 @@ async function initializeDatabase() {
         const connection = await pool.getConnection();
 
         try {
-            // Criar tabelas se não existirem
-            const createTablesQuery = `
-                CREATE TABLE IF NOT EXISTS users (
+            // Dropar tabelas antigas se existirem
+            console.log('[DB] Removendo tabelas antigas...');
+            await connection.query('DROP TABLE IF EXISTS tracking_events');
+            await connection.query('DROP TABLE IF EXISTS daily_stats');
+            await connection.query('DROP TABLE IF EXISTS users');
+
+            // Criar novas tabelas
+            console.log('[DB] Criando novas tabelas...');
+            
+            const createUsersTable = `
+                CREATE TABLE users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     username VARCHAR(100) NOT NULL UNIQUE,
                     password VARCHAR(255) NOT NULL,
@@ -71,9 +79,11 @@ async function initializeDatabase() {
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_username (username)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `;
 
-                CREATE TABLE IF NOT EXISTS tracking_events (
+            const createEventsTable = `
+                CREATE TABLE tracking_events (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     event_type VARCHAR(50) NOT NULL,
                     zone_id VARCHAR(50) NOT NULL,
@@ -83,11 +93,13 @@ async function initializeDatabase() {
                     INDEX idx_zone_id (zone_id),
                     INDEX idx_user_id (user_id),
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `;
 
-            await connection.query(createTablesQuery);
-            console.log('[DB] ✅ Tabelas criadas/verificadas com sucesso!');
+            await connection.query(createUsersTable);
+            await connection.query(createEventsTable);
+
+            console.log('[DB] ✅ Tabelas criadas com sucesso!');
             dbInitialized = true;
         } finally {
             connection.release();
