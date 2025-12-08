@@ -506,3 +506,4 @@ app.listen(PORT, () => {
     console.log('[SERVER] 📈 Stats URL: http://localhost:' + PORT + '/api/stats/:zone_id/:ymid');
     console.log('[SERVER] ⚠️  MODO ISOLADO: Cada usuário tem dados 100% isolados');
 });
+
