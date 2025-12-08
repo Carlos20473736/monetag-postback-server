@@ -95,22 +95,22 @@ app.get('/health', (req, res) => {
 // Recebe postbacks do SDK Monetag
 // ========================================
 app.get('/api/postback', async (req, res) => {
-    // Extrair parâmetros da query string (conforme especificação Monetag)
-    const { event, zone_id, ymid, request_var, telegram_id, estimated_price } = req.query;
+    // Extrair parâmetros da query string (conforme URL do Monetag)
+    const { event_type, zone_id, ymid, estimated_price, request_var, telegram_id } = req.query;
 
     // Log dos parâmetros recebidos
     const timestamp = new Date().toISOString();
     console.log(`[POSTBACK] [${timestamp}] 📥 Recebido do SDK Monetag:`);
-    console.log(`[POSTBACK]   - event: ${event}`);
+    console.log(`[POSTBACK]   - event_type: ${event_type}`);
     console.log(`[POSTBACK]   - zone_id: ${zone_id}`);
     console.log(`[POSTBACK]   - ymid: ${ymid}`);
+    console.log(`[POSTBACK]   - estimated_price: ${estimated_price}`);
     console.log(`[POSTBACK]   - request_var: ${request_var}`);
     console.log(`[POSTBACK]   - telegram_id: ${telegram_id}`);
-    console.log(`[POSTBACK]   - estimated_price: ${estimated_price}`);
 
     // Validar dados obrigatórios
-    if (!event || !zone_id) {
-        console.log('[POSTBACK] ⚠️  Dados inválidos - faltam event ou zone_id');
+    if (!event_type || !zone_id) {
+        console.log('[POSTBACK] ⚠️  Dados inválidos - faltam event_type ou zone_id');
         return res.status(200).json({ success: true, message: 'Postback recebido' });
     }
 
@@ -128,10 +128,10 @@ app.get('/api/postback', async (req, res) => {
         
         await connection.query(
             'INSERT INTO monetag_postbacks (event_type, zone_id, ymid, request_var, telegram_id, estimated_price) VALUES (?, ?, ?, ?, ?, ?)',
-            [event, zone_id, ymid || null, request_var || null, telegram_id || null, finalPrice]
+            [event_type, zone_id, ymid || null, request_var || null, telegram_id || null, finalPrice]
         );
 
-        console.log(`[POSTBACK] ✅ ${event.toUpperCase()} registrado com sucesso`);
+        console.log(`[POSTBACK] ✅ ${event_type.toUpperCase()} registrado com sucesso`);
         console.log(`[POSTBACK]   - Zona: ${zone_id}`);
         console.log(`[POSTBACK]   - User: ${ymid || 'anonymous'}`);
         console.log(`[POSTBACK]   - Preço: R$ ${finalPrice}`);
@@ -141,7 +141,7 @@ app.get('/api/postback', async (req, res) => {
         // Retornar sempre 200 OK
         res.status(200).json({
             success: true,
-            message: `${event} registrado com sucesso`
+            message: `${event_type} registrado com sucesso`
         });
     } catch (error) {
         console.error('[POSTBACK] ❌ Erro ao registrar evento:', error.message);
