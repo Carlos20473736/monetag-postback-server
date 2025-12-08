@@ -4,7 +4,7 @@
   "main": "server.js",
   "description": "Servidor de postback para rastreamento de impressões e cliques do Monetag ADS",
   "scripts": {
-    "start": "node reset-db-complete.js && node server.js",
+    "start": "node server.js",
     "dev": "node server.js",
     "init-db": "node init-db.js",
     "reset": "node reset-db-complete.js",

@@ -44,7 +44,7 @@ async function createPool() {
     }
 }
 
-// Função para inicializar banco de dados (criar tabelas)
+// Função para inicializar banco de dados (criar tabelas se não existirem)
 async function initializeDatabase() {
     if (dbInitialized) return true;
 
@@ -58,17 +58,9 @@ async function initializeDatabase() {
         const connection = await pool.getConnection();
 
         try {
-            // Dropar tabelas antigas se existirem
-            console.log('[DB] Removendo tabelas antigas...');
-            await connection.query('DROP TABLE IF EXISTS tracking_events');
-            await connection.query('DROP TABLE IF EXISTS daily_stats');
-            await connection.query('DROP TABLE IF EXISTS users');
-
-            // Criar novas tabelas
-            console.log('[DB] Criando novas tabelas...');
-            
+            // Criar tabela users se não existir
             const createUsersTable = `
-                CREATE TABLE users (
+                CREATE TABLE IF NOT EXISTS users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     email VARCHAR(255) NOT NULL UNIQUE,
                     total_impressions INT DEFAULT 0,
@@ -81,7 +73,7 @@ async function initializeDatabase() {
             `;
 
             const createEventsTable = `
-                CREATE TABLE tracking_events (
+                CREATE TABLE IF NOT EXISTS tracking_events (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     event_type VARCHAR(50) NOT NULL,
                     zone_id VARCHAR(50) NOT NULL,
@@ -97,7 +89,7 @@ async function initializeDatabase() {
             await connection.query(createUsersTable);
             await connection.query(createEventsTable);
 
-            console.log('[DB] ✅ Tabelas criadas com sucesso!');
+            console.log('[DB] ✅ Tabelas criadas ou já existem!');
             dbInitialized = true;
         } finally {
             connection.release();
