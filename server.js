@@ -30,8 +30,8 @@ async function createDatabase() {
         const connection = await tempPool.getConnection();
         
         try {
-            await connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME || 'monetag_tracking'}`);
-            console.log('[DB] ✅ Banco de dados criado/verificado!');
+            // Banco de dados 'railway' já existe
+            console.log('[DB] ✅ Usando banco de dados existente: railway');
         } finally {
             connection.release();
             await tempPool.end();
@@ -55,7 +55,7 @@ async function createPool() {
             host: process.env.DB_HOST || 'mysql',
             user: process.env.DB_USER || 'root',
             password: process.env.DB_PASSWORD || '',
-            database: process.env.DB_NAME || 'monetag_tracking',
+            database: process.env.DB_NAME || 'railway',
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0,
