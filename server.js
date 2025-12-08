@@ -466,7 +466,7 @@ app.get('/health', (req, res) => {
 // ============================================
 // INICIAR SERVIDOR
 // ============================================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
     console.log(`\n🚀 Monetag Postback Server rodando em http://localhost:${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard`);
