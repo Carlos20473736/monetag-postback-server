@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Pool de conexões MySQL
 let pool = null;
@@ -28,17 +29,47 @@ async function initializeDatabase() {
             queueLimit: 0
         });
 
-        console.log('✅ Pool de conexões criado');
+        console.log('[DB] ✅ Pool de conexões criado');
 
         // Testar conexão
         const connection = await pool.getConnection();
-        console.log('✅ Conectado ao banco de dados:', process.env.DB_NAME);
+        console.log('[DB] ✅ Conectado ao banco de dados:', process.env.DB_NAME);
+        
+        // Criar tabela se não existir
+        await createTablesIfNotExists(connection);
+        
         connection.release();
 
         return true;
     } catch (error) {
-        console.error('❌ Erro ao conectar ao banco:', error.message);
+        console.error('[DB] ❌ Erro ao conectar ao banco:', error.message);
         return false;
+    }
+}
+
+// ========================================
+// CRIAR TABELAS SE NÃO EXISTIREM
+// ========================================
+async function createTablesIfNotExists(connection) {
+    try {
+        // Tabela para rastreamento global (sem email)
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS monetag_events (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                event_type VARCHAR(50) NOT NULL,
+                zone_id VARCHAR(100),
+                session_id VARCHAR(100),
+                revenue DECIMAL(10, 4) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_event_type (event_type),
+                INDEX idx_zone_id (zone_id),
+                INDEX idx_session_id (session_id),
+                INDEX idx_created_at (created_at)
+            )
+        `);
+        console.log('[DB] ✅ Tabela monetag_events verificada/criada');
+    } catch (error) {
+        console.error('[DB] ⚠️  Erro ao criar tabelas:', error.message);
     }
 }
 
@@ -51,110 +82,108 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
-        database: pool ? 'connected' : 'disconnected'
+        database: pool ? 'connected' : 'disconnected',
+        mode: 'global-tracking'
     });
 });
 
-// Registrar Impressão/Clique (Dados Globais)
-app.post('/api/track', async (req, res) => {
+// ========================================
+// ENDPOINT DE POSTBACK (GLOBAL - SEM EMAIL)
+// ========================================
+app.post('/api/postback', async (req, res) => {
     if (!pool) {
-        return res.status(500).json({ success: false, message: 'Banco de dados não conectado' });
+        console.log('[POSTBACK] ⚠️  Banco de dados não conectado');
+        return res.status(200).json({ success: true, message: 'Postback recebido (offline)' });
     }
 
-    const { event_type, zone_id, estimated_price } = req.body;
+    const { event_type, zone_id, session_id, estimated_price, revenue } = req.body;
 
     // Validar dados obrigatórios
     if (!event_type || !zone_id) {
-        return res.status(400).json({ 
-            success: false, 
-            message: 'event_type e zone_id são obrigatórios' 
-        });
+        console.log('[POSTBACK] ❌ Dados inválidos:', { event_type, zone_id });
+        return res.status(200).json({ success: true, message: 'Postback recebido' });
     }
 
     try {
         const connection = await pool.getConnection();
 
-        // Inserir evento na tabela monetag_events (sem user_id/email)
-        const [result] = await connection.query(
-            'INSERT INTO monetag_events (event_type, revenue, session_id) VALUES (?, ?, ?)',
-            [event_type, estimated_price || 0, zone_id]
+        // Inserir evento na tabela monetag_events (tracking global)
+        const finalRevenue = estimated_price || revenue || 0;
+        const finalSessionId = session_id || zone_id;
+
+        await connection.query(
+            'INSERT INTO monetag_events (event_type, zone_id, session_id, revenue) VALUES (?, ?, ?, ?)',
+            [event_type, zone_id, finalSessionId, finalRevenue]
         );
 
-        console.log(`[TRACK] ${event_type} registrado para zona ${zone_id}`);
+        console.log(`[POSTBACK] ✅ ${event_type.toUpperCase()} registrado | Zona: ${zone_id} | Sessão: ${finalSessionId} | Receita: ${finalRevenue}`);
 
         connection.release();
 
-        res.json({
+        // Retornar sempre 200 para não quebrar o fluxo do cliente
+        res.status(200).json({
             success: true,
             message: `${event_type} registrado com sucesso`,
-            event_id: result.insertId
+            mode: 'global-tracking'
         });
     } catch (error) {
-        console.error('[TRACK] Erro ao registrar evento:', error.message);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao registrar evento',
-            error: error.message
+        console.error('[POSTBACK] ❌ Erro ao registrar evento:', error.message);
+        // Retornar 200 mesmo em erro para não quebrar o cliente
+        res.status(200).json({
+            success: true,
+            message: 'Postback recebido'
         });
     }
 });
 
-// Obter Estatísticas Globais
-app.get('/api/stats/:zone_id', async (req, res) => {
+// ========================================
+// ENDPOINT DE RASTREAMENTO (COMPATÍVEL COM CLIENTE)
+// ========================================
+app.post('/api/track', async (req, res) => {
     if (!pool) {
-        return res.status(500).json({ success: false, message: 'Banco de dados não conectado' });
+        console.log('[TRACK] ⚠️  Banco de dados não conectado');
+        return res.status(200).json({ success: true });
     }
 
-    const { zone_id } = req.params;
+    const { event_type, zone_id, session_id, estimated_price, revenue } = req.body;
+
+    if (!event_type || !zone_id) {
+        return res.status(200).json({ success: true });
+    }
 
     try {
         const connection = await pool.getConnection();
 
-        // Contar impressões e cliques por zona_id (armazenado em session_id)
-        const [impressions] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression" AND session_id = ?',
-            [zone_id]
+        const finalRevenue = estimated_price || revenue || 0;
+        const finalSessionId = session_id || zone_id;
+
+        await connection.query(
+            'INSERT INTO monetag_events (event_type, zone_id, session_id, revenue) VALUES (?, ?, ?, ?)',
+            [event_type, zone_id, finalSessionId, finalRevenue]
         );
 
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click" AND session_id = ?',
-            [zone_id]
-        );
-
-        const [revenue] = await connection.query(
-            'SELECT SUM(revenue) as total FROM monetag_events WHERE session_id = ?',
-            [zone_id]
-        );
+        console.log(`[TRACK] ✅ ${event_type} | Zona: ${zone_id}`);
 
         connection.release();
 
-        const totalImpressions = impressions[0]?.count || 0;
-        const totalClicks = clicks[0]?.count || 0;
-        const totalRevenue = revenue[0]?.total || 0;
-
-        console.log(`[STATS] Zona ${zone_id}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
-
-        res.json({
-            success: true,
-            zone_id: zone_id,
-            total_impressions: totalImpressions,
-            total_clicks: totalClicks,
-            total_earnings: totalRevenue.toFixed(4)
-        });
+        res.status(200).json({ success: true });
     } catch (error) {
-        console.error('[STATS] Erro ao buscar estatísticas:', error.message);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao buscar estatísticas',
-            error: error.message
-        });
+        console.error('[TRACK] ❌ Erro:', error.message);
+        res.status(200).json({ success: true });
     }
 });
 
-// Obter Estatísticas Globais (sem zona_id)
+// ========================================
+// OBTER ESTATÍSTICAS GLOBAIS
+// ========================================
 app.get('/api/stats', async (req, res) => {
     if (!pool) {
-        return res.status(500).json({ success: false, message: 'Banco de dados não conectado' });
+        return res.status(200).json({
+            success: true,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_earnings: '0.0000'
+        });
     }
 
     try {
@@ -185,14 +214,77 @@ app.get('/api/stats', async (req, res) => {
             success: true,
             total_impressions: totalImpressions,
             total_clicks: totalClicks,
-            total_earnings: totalRevenue.toFixed(4)
+            total_earnings: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
-        console.error('[STATS] Erro ao buscar estatísticas globais:', error.message);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao buscar estatísticas',
-            error: error.message
+        console.error('[STATS] ❌ Erro ao buscar estatísticas globais:', error.message);
+        res.status(200).json({
+            success: true,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_earnings: '0.0000'
+        });
+    }
+});
+
+// ========================================
+// OBTER ESTATÍSTICAS POR ZONA
+// ========================================
+app.get('/api/stats/:zone_id', async (req, res) => {
+    if (!pool) {
+        return res.status(200).json({
+            success: true,
+            zone_id: req.params.zone_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_earnings: '0.0000'
+        });
+    }
+
+    const { zone_id } = req.params;
+
+    try {
+        const connection = await pool.getConnection();
+
+        // Contar impressões e cliques por zona
+        const [impressions] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression" AND zone_id = ?',
+            [zone_id]
+        );
+
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click" AND zone_id = ?',
+            [zone_id]
+        );
+
+        const [revenue] = await connection.query(
+            'SELECT SUM(revenue) as total FROM monetag_events WHERE zone_id = ?',
+            [zone_id]
+        );
+
+        connection.release();
+
+        const totalImpressions = impressions[0]?.count || 0;
+        const totalClicks = clicks[0]?.count || 0;
+        const totalRevenue = revenue[0]?.total || 0;
+
+        console.log(`[STATS] Zona ${zone_id}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
+
+        res.json({
+            success: true,
+            zone_id: zone_id,
+            total_impressions: totalImpressions,
+            total_clicks: totalClicks,
+            total_earnings: parseFloat(totalRevenue).toFixed(4)
+        });
+    } catch (error) {
+        console.error('[STATS] ❌ Erro ao buscar estatísticas da zona:', error.message);
+        res.status(200).json({
+            success: true,
+            zone_id: zone_id,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_earnings: '0.0000'
         });
     }
 });
@@ -205,18 +297,21 @@ async function startServer() {
     const dbConnected = await initializeDatabase();
 
     if (!dbConnected) {
-        console.warn('⚠️  Banco de dados não disponível, mas servidor iniciando mesmo assim...');
+        console.warn('[SERVER] ⚠️  Banco de dados não disponível, mas servidor iniciando mesmo assim...');
     }
 
     app.listen(PORT, () => {
-        console.log(`\n🚀 Servidor Monetag Postback iniciado na porta ${PORT}`);
-        console.log(`📊 Modo: Dados Globais (sem identificação de usuário)`);
+        console.log(`\n${'='.repeat(50)}`);
+        console.log(`🚀 Servidor Monetag Postback iniciado na porta ${PORT}`);
+        console.log(`📊 Modo: TRACKING GLOBAL (sem email)`);
         console.log(`🗄️  Banco de dados: ${process.env.DB_NAME || 'railway'}`);
+        console.log(`${'='.repeat(50)}`);
         console.log(`\n✅ Endpoints disponíveis:`);
         console.log(`   - GET  /health`);
-        console.log(`   - POST /api/track`);
-        console.log(`   - GET  /api/stats`);
-        console.log(`   - GET  /api/stats/:zone_id`);
+        console.log(`   - POST /api/postback (RECOMENDADO - tracking global)`);
+        console.log(`   - POST /api/track (alternativo)`);
+        console.log(`   - GET  /api/stats (estatísticas globais)`);
+        console.log(`   - GET  /api/stats/:zone_id (estatísticas por zona)`);
         console.log(`\n`);
     });
 }
