@@ -263,6 +263,14 @@ app.get('/api/user/:email', async (req, res) => {
         const connection = await pool.getConnection();
 
         try {
+            // Primeiro, criar o usuário se não existir
+            await connection.query(
+                `INSERT IGNORE INTO users (email, total_impressions, total_clicks, total_earnings) 
+                 VALUES (?, 0, 0, 0)`,
+                [email]
+            );
+
+            // Depois buscar os dados
             const [stats] = await connection.query(
                 `SELECT 
                     COUNT(CASE WHEN event_type = 'impression' THEN 1 END) as total_impressions,
