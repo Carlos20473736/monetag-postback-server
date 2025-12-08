@@ -27,7 +27,7 @@ async function createPool() {
             host: process.env.DB_HOST || 'mysql',
             user: process.env.DB_USER || 'root',
             password: process.env.DB_PASSWORD || '',
-            database: process.env.DB_NAME || 'monetag_tracking',
+            database: process.env.DB_NAME || 'railway',
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0,
@@ -60,400 +60,404 @@ async function initializeDatabase() {
         try {
             // Criar tabelas se não existirem
             const createTablesQuery = `
-                CREATE TABLE IF NOT EXISTS tracking_events (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    event_type VARCHAR(50) NOT NULL,
-                    zone_id VARCHAR(50) NOT NULL,
-                    user_id VARCHAR(100) NOT NULL,
-                    user_email VARCHAR(255),
-                    estimated_price DECIMAL(10, 4) DEFAULT 0.00,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_event_type (event_type),
-                    INDEX idx_zone_id (zone_id),
-                    INDEX idx_user_id (user_id),
-                    INDEX idx_created_at (created_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-                CREATE TABLE IF NOT EXISTS daily_stats (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    zone_id VARCHAR(50) NOT NULL,
-                    event_date DATE NOT NULL,
-                    impressions INT DEFAULT 0,
-                    clicks INT DEFAULT 0,
-                    total_revenue DECIMAL(10, 4) DEFAULT 0.00,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_zone_date (zone_id, event_date)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
                 CREATE TABLE IF NOT EXISTS users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id VARCHAR(100) NOT NULL UNIQUE,
+                    username VARCHAR(100) NOT NULL UNIQUE,
+                    password VARCHAR(255) NOT NULL,
                     email VARCHAR(255),
-                    first_name VARCHAR(100),
-                    last_name VARCHAR(100),
                     total_impressions INT DEFAULT 0,
                     total_clicks INT DEFAULT 0,
                     total_earnings DECIMAL(10, 4) DEFAULT 0.00,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_username (username)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+                CREATE TABLE IF NOT EXISTS tracking_events (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    event_type VARCHAR(50) NOT NULL,
+                    zone_id VARCHAR(50) NOT NULL,
+                    user_id INT NOT NULL,
+                    estimated_price DECIMAL(10, 4) DEFAULT 0.00,
+                    INDEX idx_event_type (event_type),
+                    INDEX idx_zone_id (zone_id),
                     INDEX idx_user_id (user_id),
-                    INDEX idx_email (email)
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             `;
 
-            // Executar cada CREATE TABLE separadamente
-            const tables = createTablesQuery.split(';').filter(t => t.trim());
-            for (const table of tables) {
-                if (table.trim()) {
-                    await connection.execute(table);
-                }
-            }
-
+            await connection.query(createTablesQuery);
             console.log('[DB] ✅ Tabelas criadas/verificadas com sucesso!');
             dbInitialized = true;
-            return true;
-
         } finally {
             connection.release();
         }
-
     } catch (error) {
-        console.error('[DB] ⚠️  Erro ao inicializar banco:', error.message);
-        // Não falhar completamente, apenas avisar
-        return false;
+        console.error('[DB] ❌ Erro ao inicializar banco:', error.message);
+        dbInitialized = false;
     }
 }
 
-// Health check
+// ==================== ENDPOINTS ====================
+
+// Health Check
 app.get('/health', async (req, res) => {
     try {
-        // Tentar criar pool se não existir
         if (!pool) {
             await createPool();
         }
+        
+        const connection = await pool.getConnection();
+        connection.release();
 
-        res.json({ 
-            status: 'OK', 
-            timestamp: new Date().toISOString(),
-            database: pool ? 'connected' : 'disconnected',
+        res.json({
+            status: 'OK',
+            database: 'connected',
             initialized: dbInitialized
         });
     } catch (error) {
-        res.json({ 
-            status: 'OK', 
-            timestamp: new Date().toISOString(),
-            database: 'error',
+        res.status(500).json({
+            status: 'ERROR',
+            database: 'disconnected',
             error: error.message
         });
     }
 });
 
-// Endpoint para receber postbacks de impressões e cliques
-app.get('/api/postback', async (req, res) => {
+// ==================== AUTENTICAÇÃO ====================
+
+// Registrar novo usuário
+app.post('/api/auth/register', async (req, res) => {
     try {
-        // Tentar criar pool se não existir
+        const { username, password, email } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Username e password são obrigatórios'
+            });
+        }
+
         if (!pool) {
             await createPool();
         }
 
-        // Tentar inicializar banco se não foi inicializado
-        if (!dbInitialized) {
-            await initializeDatabase();
-        }
-
-        if (!pool) {
-            return res.status(503).json({
-                success: false,
-                message: 'Banco de dados não está disponível'
-            });
-        }
-
-        const { event_type, zone_id, ymid, user_email, estimated_price } = req.query;
-
-        console.log(`[POSTBACK] Recebido:`, {
-            event_type,
-            zone_id,
-            ymid,
-            user_email,
-            estimated_price
-        });
-
-        // Validar dados obrigatórios
-        if (!event_type || !zone_id || !ymid) {
-            return res.status(400).json({
-                success: false,
-                message: 'Parâmetros obrigatórios faltando: event_type, zone_id, ymid'
-            });
-        }
-
-        // Obter conexão do pool
         const connection = await pool.getConnection();
 
         try {
-            // Inserir registro na tabela de tracking
-            const query = `
-                INSERT INTO tracking_events 
-                (event_type, zone_id, user_id, user_email, estimated_price, created_at)
-                VALUES (?, ?, ?, ?, ?, NOW())
-            `;
+            // Verificar se usuário já existe
+            const [existingUser] = await connection.query(
+                'SELECT id FROM users WHERE username = ?',
+                [username]
+            );
 
-            const values = [event_type, zone_id, ymid, user_email || 'unknown@youngmoney.com', estimated_price || '0.00'];
+            if (existingUser.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Username já existe'
+                });
+            }
 
-            const [result] = await connection.execute(query, values);
+            // Inserir novo usuário
+            const [result] = await connection.query(
+                'INSERT INTO users (username, password, email) VALUES (?, ?, ?)',
+                [username, password, email || null]
+            );
 
-            console.log(`[POSTBACK] ✅ Armazenado:`, {
-                id: result.insertId,
-                event_type,
-                zone_id,
-                user_id: ymid
+            res.json({
+                success: true,
+                message: 'Usuário registrado com sucesso',
+                user_id: result.insertId,
+                username: username
             });
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error('[AUTH] Erro ao registrar:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erro ao registrar usuário',
+            error: error.message
+        });
+    }
+});
 
-            // Retornar resposta de sucesso
+// Login
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Username e password são obrigatórios'
+            });
+        }
+
+        if (!pool) {
+            await createPool();
+        }
+
+        const connection = await pool.getConnection();
+
+        try {
+            // Buscar usuário
+            const [users] = await connection.query(
+                'SELECT id, username, email, total_impressions, total_clicks, total_earnings FROM users WHERE username = ? AND password = ?',
+                [username, password]
+            );
+
+            if (users.length === 0) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Username ou password incorretos'
+                });
+            }
+
+            const user = users[0];
+
+            res.json({
+                success: true,
+                message: 'Login realizado com sucesso',
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    impressions: user.total_impressions,
+                    clicks: user.total_clicks,
+                    earnings: user.total_earnings
+                }
+            });
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error('[AUTH] Erro ao fazer login:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erro ao fazer login',
+            error: error.message
+        });
+    }
+});
+
+// ==================== RASTREAMENTO ====================
+
+// Registrar impressão ou clique
+app.post('/api/track', async (req, res) => {
+    try {
+        const { event_type, zone_id, user_id, estimated_price } = req.body;
+
+        if (!event_type || !zone_id || !user_id) {
+            return res.status(400).json({
+                success: false,
+                message: 'event_type, zone_id e user_id são obrigatórios'
+            });
+        }
+
+        if (!['impression', 'click'].includes(event_type)) {
+            return res.status(400).json({
+                success: false,
+                message: 'event_type deve ser "impression" ou "click"'
+            });
+        }
+
+        if (!pool) {
+            await createPool();
+        }
+
+        const connection = await pool.getConnection();
+
+        try {
+            // Inserir evento
+            const [result] = await connection.query(
+                'INSERT INTO tracking_events (event_type, zone_id, user_id, estimated_price) VALUES (?, ?, ?, ?)',
+                [event_type, zone_id, user_id, estimated_price || 0]
+            );
+
+            // Atualizar estatísticas do usuário
+            if (event_type === 'impression') {
+                await connection.query(
+                    'UPDATE users SET total_impressions = total_impressions + 1, total_earnings = total_earnings + ? WHERE id = ?',
+                    [estimated_price || 0, user_id]
+                );
+            } else if (event_type === 'click') {
+                await connection.query(
+                    'UPDATE users SET total_clicks = total_clicks + 1, total_earnings = total_earnings + ? WHERE id = ?',
+                    [estimated_price || 0, user_id]
+                );
+            }
+
             res.json({
                 success: true,
                 message: `${event_type} registrado com sucesso`,
-                event_id: result.insertId,
-                timestamp: new Date().toISOString()
+                event_id: result.insertId
             });
-
         } finally {
             connection.release();
         }
-
     } catch (error) {
-        console.error(`[POSTBACK] ❌ Erro:`, error.message);
+        console.error('[TRACK] Erro ao registrar evento:', error);
         res.status(500).json({
             success: false,
-            message: 'Erro ao processar postback',
+            message: 'Erro ao registrar evento',
             error: error.message
         });
     }
 });
 
-// Endpoint para obter estatísticas
-app.get('/api/stats/:zone_id', async (req, res) => {
+// ==================== ESTATÍSTICAS ====================
+
+// Obter dados do usuário
+app.get('/api/user/:user_id', async (req, res) => {
     try {
-        // Tentar criar pool se não existir
-        if (!pool) {
-            await createPool();
-        }
-
-        // Tentar inicializar banco se não foi inicializado
-        if (!dbInitialized) {
-            await initializeDatabase();
-        }
-
-        if (!pool) {
-            return res.status(503).json({
-                success: false,
-                message: 'Banco de dados não está disponível'
-            });
-        }
-
-        const { zone_id } = req.params;
-
-        console.log(`[STATS] Solicitação para zona: ${zone_id}`);
-
-        const connection = await pool.getConnection();
-
-        try {
-            // Contar impressões e cliques
-            const query = `
-                SELECT 
-                    event_type,
-                    COUNT(*) as count,
-                    SUM(CAST(estimated_price AS DECIMAL(10, 4))) as total_revenue
-                FROM tracking_events
-                WHERE zone_id = ?
-                GROUP BY event_type
-            `;
-
-            const [rows] = await connection.execute(query, [zone_id]);
-
-            // Formatar resposta
-            const stats = {
-                zone_id,
-                impressions: 0,
-                clicks: 0,
-                total_revenue: 0,
-                timestamp: new Date().toISOString()
-            };
-
-            rows.forEach(row => {
-                if (row.event_type === 'impression') {
-                    stats.impressions = row.count;
-                    stats.total_revenue += parseFloat(row.total_revenue || 0);
-                } else if (row.event_type === 'click') {
-                    stats.clicks = row.count;
-                    stats.total_revenue += parseFloat(row.total_revenue || 0);
-                }
-            });
-
-            console.log(`[STATS] ✅ Retornando:`, stats);
-
-            res.json(stats);
-
-        } finally {
-            connection.release();
-        }
-
-    } catch (error) {
-        console.error(`[STATS] ❌ Erro:`, error.message);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao obter estatísticas',
-            error: error.message
-        });
-    }
-});
-
-// Endpoint para obter todos os eventos de um usuário
-app.get('/api/events/:user_id', async (req, res) => {
-    try {
-        // Tentar criar pool se não existir
-        if (!pool) {
-            await createPool();
-        }
-
-        // Tentar inicializar banco se não foi inicializado
-        if (!dbInitialized) {
-            await initializeDatabase();
-        }
-
-        if (!pool) {
-            return res.status(503).json({
-                success: false,
-                message: 'Banco de dados não está disponível'
-            });
-        }
-
         const { user_id } = req.params;
 
-        const connection = await pool.getConnection();
-
-        try {
-            const query = `
-                SELECT *
-                FROM tracking_events
-                WHERE user_id = ?
-                ORDER BY created_at DESC
-                LIMIT 100
-            `;
-
-            const [rows] = await connection.execute(query, [user_id]);
-
-            res.json({
-                user_id,
-                total_events: rows.length,
-                events: rows,
-                timestamp: new Date().toISOString()
-            });
-
-        } finally {
-            connection.release();
-        }
-
-    } catch (error) {
-        console.error(`[EVENTS] ❌ Erro:`, error.message);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao obter eventos',
-            error: error.message
-        });
-    }
-});
-
-// Endpoint para resetar dados (apenas para desenvolvimento)
-app.post('/api/reset', async (req, res) => {
-    try {
-        // Verificar se está em desenvolvimento
-        if (process.env.NODE_ENV === 'production') {
-            return res.status(403).json({
-                success: false,
-                message: 'Reset não permitido em produção'
-            });
-        }
-
-        // Tentar criar pool se não existir
         if (!pool) {
             await createPool();
         }
 
-        if (!pool) {
-            return res.status(503).json({
-                success: false,
-                message: 'Banco de dados não está disponível'
-            });
-        }
-
         const connection = await pool.getConnection();
 
         try {
-            await connection.execute('TRUNCATE TABLE tracking_events');
+            const [users] = await connection.query(
+                'SELECT id, username, email, total_impressions, total_clicks, total_earnings FROM users WHERE id = ?',
+                [user_id]
+            );
+
+            if (users.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Usuário não encontrado'
+                });
+            }
+
+            const user = users[0];
 
             res.json({
                 success: true,
-                message: 'Dados resetados com sucesso'
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    impressions: user.total_impressions,
+                    clicks: user.total_clicks,
+                    earnings: user.total_earnings
+                }
             });
-
         } finally {
             connection.release();
         }
-
     } catch (error) {
-        console.error(`[RESET] ❌ Erro:`, error.message);
+        console.error('[STATS] Erro ao buscar dados:', error);
         res.status(500).json({
             success: false,
-            message: 'Erro ao resetar dados',
+            message: 'Erro ao buscar dados',
             error: error.message
         });
     }
 });
 
-// Iniciar servidor
-async function startServer() {
-    const PORT = process.env.PORT || 3000;
-
-    console.log('\n🚀 Iniciando Monetag Postback Server...');
-    console.log(`📍 Porta: ${PORT}`);
-    console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🗄️  DB Host: ${process.env.DB_HOST || 'mysql'}`);
-    console.log(`📦 Database: ${process.env.DB_NAME || 'monetag_tracking'}\n`);
-
-    // Tentar criar pool na inicialização (mas não falhar se não conseguir)
+// Obter histórico de eventos do usuário
+app.get('/api/user/:user_id/events', async (req, res) => {
     try {
-        await createPool();
-        console.log('[DB] ✅ Pool de conexões criado na inicialização');
-    } catch (error) {
-        console.log('[DB] ⚠️  Não foi possível criar pool na inicialização');
-        console.log('[DB] O pool será criado sob demanda quando uma requisição chegar');
-    }
+        const { user_id } = req.params;
 
-    app.listen(PORT, () => {
-        console.log(`\n✅ Servidor Monetag Postback iniciado na porta ${PORT}`);
-        console.log(`📍 Health check: http://localhost:${PORT}/health`);
-        console.log(`📊 Postback endpoint: http://localhost:${PORT}/api/postback`);
-        console.log(`📈 Stats endpoint: http://localhost:${PORT}/api/stats/:zone_id`);
-        console.log(`📝 Events endpoint: http://localhost:${PORT}/api/events/:user_id\n`);
-    });
+        if (!pool) {
+            await createPool();
+        }
+
+        const connection = await pool.getConnection();
+
+        try {
+            const [events] = await connection.query(
+                'SELECT id, event_type, zone_id, estimated_price FROM tracking_events WHERE user_id = ? ORDER BY id DESC',
+                [user_id]
+            );
+
+            res.json({
+                success: true,
+                events: events
+            });
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error('[EVENTS] Erro ao buscar eventos:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erro ao buscar eventos',
+            error: error.message
+        });
+    }
+});
+
+// Obter estatísticas por zona
+app.get('/api/stats/zone/:zone_id', async (req, res) => {
+    try {
+        const { zone_id } = req.params;
+
+        if (!pool) {
+            await createPool();
+        }
+
+        const connection = await pool.getConnection();
+
+        try {
+            const [stats] = await connection.query(`
+                SELECT 
+                    SUM(CASE WHEN event_type = 'impression' THEN 1 ELSE 0 END) as impressions,
+                    SUM(CASE WHEN event_type = 'click' THEN 1 ELSE 0 END) as clicks,
+                    SUM(estimated_price) as total_revenue
+                FROM tracking_events
+                WHERE zone_id = ?
+            `, [zone_id]);
+
+            res.json({
+                success: true,
+                zone_id: zone_id,
+                impressions: stats[0].impressions || 0,
+                clicks: stats[0].clicks || 0,
+                total_revenue: stats[0].total_revenue || 0
+            });
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error('[STATS] Erro ao buscar estatísticas:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erro ao buscar estatísticas',
+            error: error.message
+        });
+    }
+});
+
+// ==================== SERVIDOR ====================
+
+const PORT = process.env.PORT || 3000;
+
+async function startServer() {
+    try {
+        // Criar pool de conexões
+        await createPool();
+
+        // Inicializar banco de dados
+        await initializeDatabase();
+
+        // Iniciar servidor
+        app.listen(PORT, () => {
+            console.log(`\n${'='.repeat(50)}`);
+            console.log(`✅ Servidor Monetag Postback iniciado na porta ${PORT}`);
+            console.log(`🗄️  Banco de dados: ${process.env.DB_HOST}`);
+            console.log(`📦 Database: ${process.env.DB_NAME}`);
+            console.log(`${'='.repeat(50)}\n`);
+        });
+    } catch (error) {
+        console.error('❌ Erro ao iniciar servidor:', error);
+        process.exit(1);
+    }
 }
 
-// Tratamento de erros não capturados
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('[ERROR] Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('[ERROR] Uncaught Exception:', error);
-    // Não sair do processo, apenas logar
-});
-
-// Iniciar servidor
-startServer().catch(error => {
-    console.error('[SERVER] ❌ Erro ao iniciar servidor:', error);
-    // Não sair, tentar continuar mesmo com erro
-});
-
-module.exports = app;
+startServer();
