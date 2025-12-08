@@ -15,6 +15,7 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 // Armazenamento em memória
 let events = [];
 let stats = {};
+let userStats = {};  // ✅ Contagem por email do usuário
 
 // ============================================
 // CARREGAR DADOS DO ARQUIVO
@@ -26,9 +27,11 @@ function loadData() {
             const parsed = JSON.parse(data);
             events = parsed.events || [];
             stats = parsed.stats || {};
+            userStats = parsed.userStats || {};  // ✅ Carregar userStats
             console.log('[INIT] ✅ Dados carregados do arquivo');
             console.log('[INIT] Total de eventos:', events.length);
             console.log('[INIT] Zonas com dados:', Object.keys(stats).length);
+            console.log('[INIT] Usuários com dados:', Object.keys(userStats).length);
         } else {
             console.log('[INIT] Arquivo de dados não encontrado, iniciando com dados vazios');
         }
@@ -47,6 +50,7 @@ function saveData() {
         const data = {
             events: events,
             stats: stats,
+            userStats: userStats,  // ✅ Salvar userStats
             timestamp: new Date().toISOString()
         };
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -338,6 +342,118 @@ app.get('/dashboard', (req, res) => {
     `;
 
     res.send(html);
+});
+
+// ============================================
+// ENDPOINT: CONTAR IMPRESSÕES E CLIQUES POR EMAIL
+// ============================================
+app.get('/api/count', (req, res) => {
+    const { email, event_type } = req.query;
+
+    console.log('[COUNT] Recebido:');
+    console.log('  - email:', email);
+    console.log('  - event_type:', event_type);
+
+    // Validação
+    if (!email || !event_type) {
+        console.log('[COUNT] ❌ Dados inválidos');
+        return res.status(400).json({ error: 'Missing required fields: email, event_type' });
+    }
+
+    // Criar estrutura se não existir
+    if (!userStats[email]) {
+        userStats[email] = {
+            email: email,
+            impressions: 0,
+            clicks: 0,
+            last_update: null
+        };
+    }
+
+    // Atualizar contagem
+    if (event_type === 'impression') {
+        userStats[email].impressions++;
+        console.log('[COUNT] ✅ Impressão contada para', email);
+    } else if (event_type === 'click') {
+        userStats[email].clicks++;
+        console.log('[COUNT] ✅ Clique contado para', email);
+    } else {
+        return res.status(400).json({ error: 'Invalid event_type. Use "impression" or "click"' });
+    }
+
+    userStats[email].last_update = new Date().toISOString();
+
+    // Salvar dados
+    saveData();
+
+    console.log('[COUNT] Estatísticas atualizadas:');
+    console.log('  - Impressões:', userStats[email].impressions);
+    console.log('  - Cliques:', userStats[email].clicks);
+
+    res.json({ 
+        success: true, 
+        message: `${event_type} contado com sucesso`,
+        stats: userStats[email]
+    });
+});
+
+// ============================================
+// ENDPOINT: BUSCAR ESTATÍSTICAS POR EMAIL
+// ============================================
+app.get('/api/user-stats', (req, res) => {
+    const { email } = req.query;
+
+    console.log('[USER-STATS] Buscando estatísticas para:', email);
+
+    if (!email) {
+        return res.status(400).json({ error: 'Missing required field: email' });
+    }
+
+    // Retornar estatísticas ou valores zerados
+    const stats = userStats[email] || {
+        email: email,
+        impressions: 0,
+        clicks: 0,
+        last_update: null
+    };
+
+    console.log('[USER-STATS] Estatísticas:');
+    console.log('  - Impressões:', stats.impressions);
+    console.log('  - Cliques:', stats.clicks);
+
+    res.json(stats);
+});
+
+// ============================================
+// ENDPOINT: RESETAR ESTATÍSTICAS POR EMAIL
+// ============================================
+app.post('/api/reset-user-stats', (req, res) => {
+    const { email } = req.query;
+
+    console.log('[RESET] Resetando estatísticas para:', email);
+
+    if (!email) {
+        return res.status(400).json({ error: 'Missing required field: email' });
+    }
+
+    // Resetar estatísticas
+    userStats[email] = {
+        email: email,
+        impressions: 0,
+        clicks: 0,
+        last_update: new Date().toISOString()
+    };
+
+    // Salvar dados
+    saveData();
+
+    console.log('[RESET] ✅ Estatísticas resetadas para', email);
+
+    res.json({ 
+        success: true, 
+        message: 'Estatísticas resetadas com sucesso',
+        stats: userStats[email]
+    });
 });
 
 // ============================================
