@@ -1,0 +1,21 @@
+{
+  "name": "monetag-postback-server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "description": "Servidor de postback para rastreamento de impressões e cliques do Monetag ADS",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "init-db": "node init-db.js",
+    "setup": "npm install && node init-db.js && npm start"
+  },
+  "keywords": ["monetag", "postback", "tracking", "ads"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "mysql2": "^3.15.3"
+  }
+}
