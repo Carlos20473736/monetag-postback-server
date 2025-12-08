@@ -32,6 +32,22 @@ async function createDatabase() {
         try {
             // Banco de dados 'railway' já existe
             console.log('[DB] ✅ Usando banco de dados existente: railway');
+            
+            // Criar tabelas se não existirem
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS tracking_events (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    event_type VARCHAR(50) NOT NULL,
+                    zone_id VARCHAR(50) NOT NULL,
+                    user_email VARCHAR(255) NOT NULL,
+                    estimated_price DECIMAL(10, 4) DEFAULT 0.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_event_type (event_type),
+                    INDEX idx_zone_id (zone_id),
+                    INDEX idx_user_email (user_email)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+            console.log('[DB] ✅ Tabela tracking_events criada/verificada');
         } finally {
             connection.release();
             await tempPool.end();
