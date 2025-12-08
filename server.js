@@ -214,7 +214,7 @@ app.post('/api/track', async (req, res) => {
 
             // Inserir evento
             const [result] = await connection.query(
-                'INSERT INTO tracking_events (event_type, zone_id, user_email, estimated_price) VALUES (?, ?, ?, ?)',
+                'INSERT INTO monetag_events (event_type, zone_id, user_email, estimated_price) VALUES (?, ?, ?, ?)',
                 [event_type, zone_id, user_email, estimated_price || 0]
             );
 
@@ -276,7 +276,7 @@ app.get('/api/user/:email', async (req, res) => {
                     COUNT(CASE WHEN event_type = 'impression' THEN 1 END) as total_impressions,
                     COUNT(CASE WHEN event_type = 'click' THEN 1 END) as total_clicks,
                     SUM(estimated_price) as total_earnings
-                FROM tracking_events
+                FROM monetag_events
                 WHERE user_email = ?`,
                 [email]
             );
