@@ -11,8 +11,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Pool de conexões MySQL
+// Pool de conexoes MySQL
 let pool = null;
+
+// Armazenar ultimos eventos em memoria (para deteccao de mudancas)
+const eventLog = {
+    lastEventId: 0,
+    events: []
+};
 
 // ========================================
 // INICIALIZAR CONEXÃO COM BANCO DE DADOS
@@ -125,16 +131,30 @@ app.get('/api/postback', async (req, res) => {
 
         // Inserir evento na tabela
         const finalPrice = estimated_price || 0;
-        
-        await connection.query(
+                await connection.query(
             'INSERT INTO monetag_postbacks (event_type, zone_id, ymid, request_var, telegram_id, estimated_price) VALUES (?, ?, ?, ?, ?, ?)',
             [event_type, zone_id, ymid || null, request_var || null, telegram_id || null, finalPrice]
         );
 
-        console.log(`[POSTBACK] ✅ ${event_type.toUpperCase()} registrado com sucesso`);
+        eventLog.lastEventId++;
+        eventLog.events.push({
+            id: eventLog.lastEventId,
+            event_type: event_type,
+            zone_id: zone_id,
+            ymid: ymid,
+            estimated_price: finalPrice,
+            timestamp: new Date().toISOString()
+        });
+
+        if (eventLog.events.length > 100) {
+            eventLog.events.shift();
+        }
+
+        console.log(`[POSTBACK] OK ${event_type.toUpperCase()} registrado com sucesso`);
         console.log(`[POSTBACK]   - Zona: ${zone_id}`);
         console.log(`[POSTBACK]   - User: ${ymid || 'anonymous'}`);
-        console.log(`[POSTBACK]   - Preço: R$ ${finalPrice}`);
+        console.log(`[POSTBACK]   - Preco: R$ ${finalPrice}`);
+        console.log(`[POSTBACK]   - Event ID: ${eventLog.lastEventId}`);
 
         connection.release();
 
@@ -151,6 +171,48 @@ app.get('/api/postback', async (req, res) => {
             message: 'Postback recebido'
         });
     }
+});
+
+// ========================================
+// API DE EVENTOS EM TEMPO REAL
+// Detecta novos eventos (impressoes e cliques)
+// ========================================
+app.get('/api/events', async (req, res) => {
+    const sinceId = parseInt(req.query.since_id) || 0;
+
+    const newEvents = eventLog.events.filter(e => e.id > sinceId);
+
+    if (newEvents.length > 0) {
+        console.log(`[EVENTS] ${newEvents.length} novo(s) evento(s) detectado(s)`);
+        newEvents.forEach(e => {
+            console.log(`[EVENTS]   - ${e.event_type.toUpperCase()} (ID: ${e.id})`);
+        });
+    } else {
+        console.log(`[EVENTS] Nenhum novo evento desde ID ${sinceId}`);
+    }
+
+    res.json({
+        success: true,
+        last_event_id: eventLog.lastEventId,
+        events: newEvents,
+        count: newEvents.length
+    });
+});
+
+app.get('/api/events/latest', async (req, res) => {
+    const latestEvent = eventLog.events.length > 0 ? eventLog.events[eventLog.events.length - 1] : null;
+
+    if (latestEvent) {
+        console.log(`[EVENTS] Ultimo evento: ${latestEvent.event_type.toUpperCase()} (ID: ${latestEvent.id})`);
+    } else {
+        console.log(`[EVENTS] Nenhum evento registrado ainda`);
+    }
+
+    res.json({
+        success: true,
+        last_event_id: eventLog.lastEventId,
+        latest_event: latestEvent
+    });
 });
 
 // ========================================
