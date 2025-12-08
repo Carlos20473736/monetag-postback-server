@@ -68,6 +68,20 @@ async function createTablesIfNotExists(connection) {
             )
         `);
         console.log('[DB] ✅ Tabela monetag_events verificada/criada');
+
+        // Adicionar coluna estimated_price se não existir
+        try {
+            await connection.query(`
+                ALTER TABLE monetag_events ADD COLUMN estimated_price DECIMAL(10, 4) DEFAULT 0
+            `);
+            console.log('[DB] ✅ Coluna estimated_price adicionada');
+        } catch (err) {
+            if (err.code === 'ER_DUP_FIELDNAME') {
+                console.log('[DB] ℹ️  Coluna estimated_price já existe');
+            } else {
+                console.log('[DB] ℹ️  Coluna estimated_price verificada');
+            }
+        }
     } catch (error) {
         console.error('[DB] ⚠️  Erro ao criar tabelas:', error.message);
     }
