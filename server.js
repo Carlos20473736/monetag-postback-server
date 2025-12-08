@@ -52,7 +52,7 @@ async function initializeDatabase() {
 // ========================================
 async function createTablesIfNotExists(connection) {
     try {
-        // Tabela para rastreamento de eventos
+        // Tabela para rastreamento global
         await connection.query(`
             CREATE TABLE IF NOT EXISTS monetag_events (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -64,8 +64,6 @@ async function createTablesIfNotExists(connection) {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_event_type (event_type),
                 INDEX idx_zone_id (zone_id),
-                INDEX idx_ymid (ymid),
-                INDEX idx_user_email (user_email),
                 INDEX idx_created_at (created_at)
             )
         `);
@@ -84,7 +82,8 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
-        database: pool ? 'connected' : 'disconnected'
+        database: pool ? 'connected' : 'disconnected',
+        mode: 'global-tracking'
     });
 });
 
@@ -92,11 +91,6 @@ app.get('/health', (req, res) => {
 // ENDPOINT DE POSTBACK (GET com query params)
 // ========================================
 app.get('/api/postback', async (req, res) => {
-    if (!pool) {
-        console.log('[POSTBACK] ⚠️  Banco de dados não conectado');
-        return res.status(200).json({ success: true, message: 'Postback recebido (offline)' });
-    }
-
     // Extrair parâmetros da query string
     const { event_type, zone_id, ymid, user_email, estimated_price } = req.query;
 
@@ -110,8 +104,14 @@ app.get('/api/postback', async (req, res) => {
 
     // Validar dados obrigatórios
     if (!event_type || !zone_id) {
-        console.log('[POSTBACK] ❌ Dados inválidos - faltam event_type ou zone_id');
+        console.log('[POSTBACK] ⚠️  Dados inválidos - faltam event_type ou zone_id');
         return res.status(200).json({ success: true, message: 'Postback recebido' });
+    }
+
+    // Se banco não está conectado, retornar sucesso mesmo assim
+    if (!pool) {
+        console.log('[POSTBACK] ⚠️  Banco de dados não conectado, retornando sucesso');
+        return res.status(200).json({ success: true, message: 'Postback recebido (offline)' });
     }
 
     try {
@@ -151,14 +151,13 @@ app.get('/api/postback', async (req, res) => {
 // ENDPOINT DE POSTBACK (POST alternativo)
 // ========================================
 app.post('/api/postback', async (req, res) => {
-    if (!pool) {
-        console.log('[POSTBACK] ⚠️  Banco de dados não conectado');
-        return res.status(200).json({ success: true });
-    }
-
     const { event_type, zone_id, ymid, user_email, estimated_price } = req.body;
 
     if (!event_type || !zone_id) {
+        return res.status(200).json({ success: true });
+    }
+
+    if (!pool) {
         return res.status(200).json({ success: true });
     }
 
@@ -184,72 +183,39 @@ app.post('/api/postback', async (req, res) => {
 });
 
 // ========================================
-// ENDPOINT DE RASTREAMENTO
-// ========================================
-app.get('/api/track', async (req, res) => {
-    if (!pool) {
-        return res.status(200).json({ success: true });
-    }
-
-    const { event_type, zone_id, ymid, user_email, estimated_price } = req.query;
-
-    if (!event_type || !zone_id) {
-        return res.status(200).json({ success: true });
-    }
-
-    try {
-        const connection = await pool.getConnection();
-
-        const finalPrice = estimated_price || 0;
-        
-        await connection.query(
-            'INSERT INTO monetag_events (event_type, zone_id, ymid, user_email, estimated_price) VALUES (?, ?, ?, ?, ?)',
-            [event_type, zone_id, ymid || null, user_email || null, finalPrice]
-        );
-
-        console.log(`[TRACK] ✅ ${event_type} registrado`);
-
-        connection.release();
-
-        res.status(200).json({ success: true });
-    } catch (error) {
-        console.error('[TRACK] ❌ Erro:', error.message);
-        res.status(200).json({ success: true });
-    }
-});
-
-// ========================================
-// OBTER ESTATÍSTICAS POR ZONA
+// OBTER ESTATÍSTICAS POR ZONA (GLOBAL)
 // ========================================
 app.get('/api/stats/:zone_id', async (req, res) => {
+    const { zone_id } = req.params;
+
+    // Se banco não está conectado, retornar zeros
     if (!pool) {
+        console.log('[STATS] ⚠️  Banco de dados não conectado');
         return res.status(200).json({
             success: true,
-            zone_id: req.params.zone_id,
+            zone_id: zone_id,
             total_impressions: 0,
             total_clicks: 0,
             total_revenue: '0.0000'
         });
     }
 
-    const { zone_id } = req.params;
-
     try {
         const connection = await pool.getConnection();
 
-        // Contar impressões
+        // Contar impressões da zona
         const [impressions] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression" AND zone_id = ?',
             [zone_id]
         );
 
-        // Contar cliques
+        // Contar cliques da zona
         const [clicks] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click" AND zone_id = ?',
             [zone_id]
         );
 
-        // Somar receita
+        // Somar receita da zona
         const [revenue] = await connection.query(
             'SELECT SUM(estimated_price) as total FROM monetag_events WHERE zone_id = ?',
             [zone_id]
@@ -339,70 +305,6 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // ========================================
-// OBTER ESTATÍSTICAS POR USUÁRIO
-// ========================================
-app.get('/api/stats/user/:ymid', async (req, res) => {
-    if (!pool) {
-        return res.status(200).json({
-            success: true,
-            ymid: req.params.ymid,
-            total_impressions: 0,
-            total_clicks: 0,
-            total_revenue: '0.0000'
-        });
-    }
-
-    const { ymid } = req.params;
-
-    try {
-        const connection = await pool.getConnection();
-
-        // Contar impressões do usuário
-        const [impressions] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "impression" AND ymid = ?',
-            [ymid]
-        );
-
-        // Contar cliques do usuário
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_events WHERE event_type = "click" AND ymid = ?',
-            [ymid]
-        );
-
-        // Somar receita do usuário
-        const [revenue] = await connection.query(
-            'SELECT SUM(estimated_price) as total FROM monetag_events WHERE ymid = ?',
-            [ymid]
-        );
-
-        connection.release();
-
-        const totalImpressions = impressions[0]?.count || 0;
-        const totalClicks = clicks[0]?.count || 0;
-        const totalRevenue = revenue[0]?.total || 0;
-
-        console.log(`[STATS] Usuário ${ymid}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
-
-        res.json({
-            success: true,
-            ymid: ymid,
-            total_impressions: totalImpressions,
-            total_clicks: totalClicks,
-            total_revenue: parseFloat(totalRevenue).toFixed(4)
-        });
-    } catch (error) {
-        console.error('[STATS] ❌ Erro ao buscar estatísticas do usuário:', error.message);
-        res.status(200).json({
-            success: true,
-            ymid: ymid,
-            total_impressions: 0,
-            total_clicks: 0,
-            total_revenue: '0.0000'
-        });
-    }
-});
-
-// ========================================
 // INICIAR SERVIDOR
 // ========================================
 async function startServer() {
@@ -416,7 +318,7 @@ async function startServer() {
     app.listen(PORT, () => {
         console.log(`\n${'='.repeat(60)}`);
         console.log(`🚀 Servidor Monetag Postback iniciado na porta ${PORT}`);
-        console.log(`📊 Modo: Rastreamento com ymid e user_email`);
+        console.log(`📊 Modo: Rastreamento Global`);
         console.log(`🗄️  Banco de dados: ${process.env.DB_NAME || 'railway'}`);
         console.log(`${'='.repeat(60)}`);
         console.log(`\n✅ Endpoints disponíveis:`);
@@ -425,7 +327,6 @@ async function startServer() {
         console.log(`   - POST /api/postback (JSON body)`);
         console.log(`   - GET  /api/stats (estatísticas globais)`);
         console.log(`   - GET  /api/stats/:zone_id (estatísticas por zona)`);
-        console.log(`   - GET  /api/stats/user/:ymid (estatísticas por usuário)`);
         console.log(`\n`);
     });
 }
