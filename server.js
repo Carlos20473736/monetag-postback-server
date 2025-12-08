@@ -70,15 +70,13 @@ async function initializeDatabase() {
             const createUsersTable = `
                 CREATE TABLE users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    username VARCHAR(100) NOT NULL UNIQUE,
-                    password VARCHAR(255) NOT NULL,
-                    email VARCHAR(255),
+                    email VARCHAR(255) NOT NULL UNIQUE,
                     total_impressions INT DEFAULT 0,
                     total_clicks INT DEFAULT 0,
                     total_earnings DECIMAL(10, 4) DEFAULT 0.00,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_username (username)
+                    INDEX idx_email (email)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `;
 
@@ -87,12 +85,12 @@ async function initializeDatabase() {
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     event_type VARCHAR(50) NOT NULL,
                     zone_id VARCHAR(50) NOT NULL,
-                    user_id INT NOT NULL,
+                    user_email VARCHAR(255) NOT NULL,
                     estimated_price DECIMAL(10, 4) DEFAULT 0.00,
                     INDEX idx_event_type (event_type),
                     INDEX idx_zone_id (zone_id),
-                    INDEX idx_user_id (user_id),
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                    INDEX idx_user_email (user_email),
+                    FOREIGN KEY (user_email) REFERENCES users(email) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `;
 
@@ -136,135 +134,17 @@ app.get('/health', async (req, res) => {
     }
 });
 
-// ==================== AUTENTICAÇÃO ====================
-
-// Registrar novo usuário
-app.post('/api/auth/register', async (req, res) => {
-    try {
-        const { username, password, email } = req.body;
-
-        if (!username || !password) {
-            return res.status(400).json({
-                success: false,
-                message: 'Username e password são obrigatórios'
-            });
-        }
-
-        if (!pool) {
-            await createPool();
-        }
-
-        const connection = await pool.getConnection();
-
-        try {
-            // Verificar se usuário já existe
-            const [existingUser] = await connection.query(
-                'SELECT id FROM users WHERE username = ?',
-                [username]
-            );
-
-            if (existingUser.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Username já existe'
-                });
-            }
-
-            // Inserir novo usuário
-            const [result] = await connection.query(
-                'INSERT INTO users (username, password, email) VALUES (?, ?, ?)',
-                [username, password, email || null]
-            );
-
-            res.json({
-                success: true,
-                message: 'Usuário registrado com sucesso',
-                user_id: result.insertId,
-                username: username
-            });
-        } finally {
-            connection.release();
-        }
-    } catch (error) {
-        console.error('[AUTH] Erro ao registrar:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao registrar usuário',
-            error: error.message
-        });
-    }
-});
-
-// Login
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-
-        if (!username || !password) {
-            return res.status(400).json({
-                success: false,
-                message: 'Username e password são obrigatórios'
-            });
-        }
-
-        if (!pool) {
-            await createPool();
-        }
-
-        const connection = await pool.getConnection();
-
-        try {
-            // Buscar usuário
-            const [users] = await connection.query(
-                'SELECT id, username, email, total_impressions, total_clicks, total_earnings FROM users WHERE username = ? AND password = ?',
-                [username, password]
-            );
-
-            if (users.length === 0) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Username ou password incorretos'
-                });
-            }
-
-            const user = users[0];
-
-            res.json({
-                success: true,
-                message: 'Login realizado com sucesso',
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    email: user.email,
-                    impressions: user.total_impressions,
-                    clicks: user.total_clicks,
-                    earnings: user.total_earnings
-                }
-            });
-        } finally {
-            connection.release();
-        }
-    } catch (error) {
-        console.error('[AUTH] Erro ao fazer login:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao fazer login',
-            error: error.message
-        });
-    }
-});
-
 // ==================== RASTREAMENTO ====================
 
 // Registrar impressão ou clique
 app.post('/api/track', async (req, res) => {
     try {
-        const { event_type, zone_id, user_id, estimated_price } = req.body;
+        const { event_type, zone_id, user_email, estimated_price } = req.body;
 
-        if (!event_type || !zone_id || !user_id) {
+        if (!event_type || !zone_id || !user_email) {
             return res.status(400).json({
                 success: false,
-                message: 'event_type, zone_id e user_id são obrigatórios'
+                message: 'event_type, zone_id e user_email são obrigatórios'
             });
         }
 
@@ -282,22 +162,36 @@ app.post('/api/track', async (req, res) => {
         const connection = await pool.getConnection();
 
         try {
+            // Verificar se usuário existe, senão criar
+            const [existingUser] = await connection.query(
+                'SELECT id FROM users WHERE email = ?',
+                [user_email]
+            );
+
+            if (existingUser.length === 0) {
+                await connection.query(
+                    'INSERT INTO users (email) VALUES (?)',
+                    [user_email]
+                );
+                console.log('[TRACK] Novo usuário criado:', user_email);
+            }
+
             // Inserir evento
             const [result] = await connection.query(
-                'INSERT INTO tracking_events (event_type, zone_id, user_id, estimated_price) VALUES (?, ?, ?, ?)',
-                [event_type, zone_id, user_id, estimated_price || 0]
+                'INSERT INTO tracking_events (event_type, zone_id, user_email, estimated_price) VALUES (?, ?, ?, ?)',
+                [event_type, zone_id, user_email, estimated_price || 0]
             );
 
             // Atualizar estatísticas do usuário
             if (event_type === 'impression') {
                 await connection.query(
-                    'UPDATE users SET total_impressions = total_impressions + 1, total_earnings = total_earnings + ? WHERE id = ?',
-                    [estimated_price || 0, user_id]
+                    'UPDATE users SET total_impressions = total_impressions + 1, total_earnings = total_earnings + ? WHERE email = ?',
+                    [estimated_price || 0, user_email]
                 );
             } else if (event_type === 'click') {
                 await connection.query(
-                    'UPDATE users SET total_clicks = total_clicks + 1, total_earnings = total_earnings + ? WHERE id = ?',
-                    [estimated_price || 0, user_id]
+                    'UPDATE users SET total_clicks = total_clicks + 1, total_earnings = total_earnings + ? WHERE email = ?',
+                    [estimated_price || 0, user_email]
                 );
             }
 
@@ -321,10 +215,10 @@ app.post('/api/track', async (req, res) => {
 
 // ==================== ESTATÍSTICAS ====================
 
-// Obter dados do usuário
-app.get('/api/user/:user_id', async (req, res) => {
+// Obter dados do usuário por email
+app.get('/api/user/:email', async (req, res) => {
     try {
-        const { user_id } = req.params;
+        const { email } = req.params;
 
         if (!pool) {
             await createPool();
@@ -334,8 +228,8 @@ app.get('/api/user/:user_id', async (req, res) => {
 
         try {
             const [users] = await connection.query(
-                'SELECT id, username, email, total_impressions, total_clicks, total_earnings FROM users WHERE id = ?',
-                [user_id]
+                'SELECT email, total_impressions, total_clicks, total_earnings FROM users WHERE email = ?',
+                [email]
             );
 
             if (users.length === 0) {
@@ -350,8 +244,6 @@ app.get('/api/user/:user_id', async (req, res) => {
             res.json({
                 success: true,
                 user: {
-                    id: user.id,
-                    username: user.username,
                     email: user.email,
                     impressions: user.total_impressions,
                     clicks: user.total_clicks,
@@ -372,9 +264,9 @@ app.get('/api/user/:user_id', async (req, res) => {
 });
 
 // Obter histórico de eventos do usuário
-app.get('/api/user/:user_id/events', async (req, res) => {
+app.get('/api/user/:email/events', async (req, res) => {
     try {
-        const { user_id } = req.params;
+        const { email } = req.params;
 
         if (!pool) {
             await createPool();
@@ -384,8 +276,8 @@ app.get('/api/user/:user_id/events', async (req, res) => {
 
         try {
             const [events] = await connection.query(
-                'SELECT id, event_type, zone_id, estimated_price FROM tracking_events WHERE user_id = ? ORDER BY id DESC',
-                [user_id]
+                'SELECT id, event_type, zone_id, estimated_price FROM tracking_events WHERE user_email = ? ORDER BY id DESC',
+                [email]
             );
 
             res.json({
