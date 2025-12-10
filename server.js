@@ -464,9 +464,10 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
 });
 
 // ========================================
-// RESET DE POSTBACKS
+// RESET DE POSTBACKS (GET e POST)
 // ========================================
-app.post('/api/reset', async (req, res) => {
+// Função auxiliar para o reset
+const handleReset = async (req, res) => {
     // Verificar token de segurança
     const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
     const expectedToken = process.env.RESET_TOKEN || 'ym_reset_monetag_scheduled_2024_secure';
@@ -546,7 +547,13 @@ app.post('/api/reset', async (req, res) => {
             details: error.message
         });
     }
-});
+};
+
+// Registrar endpoint para GET
+app.get('/api/reset', handleReset);
+
+// Registrar endpoint para POST
+app.post('/api/reset', handleReset);
 
 // ========================================
 // INICIAR SERVIDOR
