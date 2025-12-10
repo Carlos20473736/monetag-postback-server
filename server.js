@@ -464,6 +464,91 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
 });
 
 // ========================================
+// RESET DE POSTBACKS
+// ========================================
+app.post('/api/reset', async (req, res) => {
+    // Verificar token de segurança
+    const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+    const expectedToken = process.env.RESET_TOKEN || 'ym_reset_monetag_scheduled_2024_secure';
+
+    if (!token || token !== expectedToken) {
+        return res.status(401).json({
+            success: false,
+            error: 'Token inválido ou não fornecido'
+        });
+    }
+
+    if (!pool) {
+        return res.status(500).json({
+            success: false,
+            error: 'Banco de dados não conectado'
+        });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+
+        // Contar eventos antes de deletar
+        const [countResult] = await connection.query(
+            'SELECT COUNT(*) as total, COUNT(DISTINCT ymid) as users FROM monetag_postbacks'
+        );
+
+        const totalEvents = countResult[0]?.total || 0;
+        const totalUsers = countResult[0]?.users || 0;
+
+        // Contar impressões e cliques
+        const [impressionsResult] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression"'
+        );
+        const totalImpressions = impressionsResult[0]?.count || 0;
+
+        const [clicksResult] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click"'
+        );
+        const totalClicks = clicksResult[0]?.count || 0;
+
+        // Deletar todos os postbacks
+        await connection.query('DELETE FROM monetag_postbacks');
+
+        // Limpar event log em memória
+        eventLog.lastEventId = 0;
+        eventLog.events = [];
+
+        connection.release();
+
+        console.log(`[RESET] ✅ Postbacks deletados com sucesso`);
+        console.log(`[RESET]   - Total de eventos deletados: ${totalEvents}`);
+        console.log(`[RESET]   - Usuários afetados: ${totalUsers}`);
+        console.log(`[RESET]   - Impressões deletadas: ${totalImpressions}`);
+        console.log(`[RESET]   - Cliques deletados: ${totalClicks}`);
+
+        res.json({
+            success: true,
+            message: 'Reset de postbacks executado com sucesso!',
+            data: {
+                reset_type: 'monetag_postback_manual',
+                description: 'Todos os eventos de postback foram deletados',
+                current_time: new Date().toISOString(),
+                events_deleted: totalEvents,
+                users_affected: totalUsers,
+                impressions_deleted: totalImpressions,
+                clicks_deleted: totalClicks,
+                reset_datetime: new Date().toISOString(),
+                timezone: 'America/Sao_Paulo (GMT-3)',
+                timestamp: Math.floor(Date.now() / 1000)
+            }
+        });
+    } catch (error) {
+        console.error('[RESET] ❌ Erro ao resetar postbacks:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao executar reset',
+            details: error.message
+        });
+    }
+});
+
+// ========================================
 // INICIAR SERVIDOR
 // ========================================
 async function startServer() {
