@@ -64,6 +64,7 @@ async function createTablesIfNotExists(connection) {
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 event_type VARCHAR(50) NOT NULL,
                 zone_id VARCHAR(100),
+                sub_zone_id VARCHAR(100),
                 ymid VARCHAR(100),
                 request_var VARCHAR(255),
                 telegram_id VARCHAR(100),
@@ -72,6 +73,7 @@ async function createTablesIfNotExists(connection) {
                 session_expires_at TIMESTAMP NULL,
                 INDEX idx_event_type (event_type),
                 INDEX idx_zone_id (zone_id),
+                INDEX idx_sub_zone_id (sub_zone_id),
                 INDEX idx_ymid (ymid),
                 INDEX idx_telegram_id (telegram_id),
                 INDEX idx_created_at (created_at)
@@ -119,13 +121,14 @@ app.get('/health', (req, res) => {
 // ========================================
 app.get('/api/postback', async (req, res) => {
     // Extrair parâmetros da query string (conforme URL do Monetag)
-    const { event_type, zone_id, ymid, estimated_price, request_var, telegram_id } = req.query;
+    const { event_type, zone_id, sub_zone_id, ymid, estimated_price, request_var, telegram_id } = req.query;
 
     // Log dos parâmetros recebidos
     const timestamp = new Date().toISOString();
     console.log(`[POSTBACK] [${timestamp}] 📥 Recebido do SDK Monetag:`);
     console.log(`[POSTBACK]   - event_type: ${event_type}`);
     console.log(`[POSTBACK]   - zone_id: ${zone_id}`);
+    console.log(`[POSTBACK]   - sub_zone_id: ${sub_zone_id}`);
     console.log(`[POSTBACK]   - ymid: ${ymid}`);
     console.log(`[POSTBACK]   - estimated_price: ${estimated_price}`);
     console.log(`[POSTBACK]   - request_var: ${request_var}`);
@@ -166,8 +169,8 @@ app.get('/api/postback', async (req, res) => {
         // Inserir evento na tabela
         const finalPrice = estimated_price || 0;
         await connection.query(
-            'INSERT INTO monetag_postbacks (event_type, zone_id, ymid, request_var, telegram_id, estimated_price, session_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [event_type, zone_id, ymid || null, request_var || null, telegram_id || null, finalPrice, sessionExpiresAt]
+            'INSERT INTO monetag_postbacks (event_type, zone_id, sub_zone_id, ymid, request_var, telegram_id, estimated_price, session_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [event_type, zone_id, sub_zone_id || null, ymid || null, request_var || null, telegram_id || null, finalPrice, sessionExpiresAt]
         );
 
         eventLog.lastEventId++;
