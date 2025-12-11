@@ -628,9 +628,15 @@ app.get('/api/reset-expired', async (req, res) => {
         const now = new Date();
 
         // Buscar todos os usuários com sessão expirada
+        // Inclui: 1) session_expires_at expirado, 2) session_expires_at NULL com registros antigos (>15min)
+        const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+        
         const [expiredUsers] = await connection.query(
-            'SELECT DISTINCT ymid, request_var as email FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at < ?',
-            [now]
+            `SELECT DISTINCT ymid, request_var as email 
+             FROM monetag_postbacks 
+             WHERE (session_expires_at IS NOT NULL AND session_expires_at < ?) 
+                OR (session_expires_at IS NULL AND created_at < ?)`,
+            [now, fifteenMinutesAgo]
         );
 
         const expiredCount = expiredUsers.length;
@@ -651,10 +657,12 @@ app.get('/api/reset-expired', async (req, res) => {
             });
         }
 
-        // Deletar postbacks dos usuários expirados
+        // Deletar postbacks dos usuários expirados (ambos os critérios)
         await connection.query(
-            'DELETE FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at < ?',
-            [now]
+            `DELETE FROM monetag_postbacks 
+             WHERE (session_expires_at IS NOT NULL AND session_expires_at < ?) 
+                OR (session_expires_at IS NULL AND created_at < ?)`,
+            [now, fifteenMinutesAgo]
         );
 
         connection.release();
