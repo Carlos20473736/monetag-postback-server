@@ -78,6 +78,22 @@ async function createTablesIfNotExists(connection) {
             )
         `);
         console.log('[DB] ✅ Tabela monetag_postbacks verificada/criada');
+        
+        // Adicionar coluna session_expires_at se não existir
+        try {
+            await connection.query(`
+                ALTER TABLE monetag_postbacks 
+                ADD COLUMN session_expires_at TIMESTAMP NULL
+            `);
+            console.log('[DB] ✅ Coluna session_expires_at adicionada');
+        } catch (alterError) {
+            // Ignorar erro se coluna já existir
+            if (alterError.code !== 'ER_DUP_FIELDNAME') {
+                console.error('[DB] ⚠️  Erro ao adicionar coluna:', alterError.message);
+            } else {
+                console.log('[DB] ✅ Coluna session_expires_at já existe');
+            }
+        }
     } catch (error) {
         console.error('[DB] ⚠️  Erro ao criar tabelas:', error.message);
     }
