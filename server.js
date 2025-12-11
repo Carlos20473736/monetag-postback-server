@@ -682,6 +682,67 @@ app.get('/api/reset-expired', async (req, res) => {
 });
 
 // ========================================
+// LISTAR SESSÕES ATIVAS (NÃO EXPIRADAS)
+// ========================================
+app.get('/api/active-sessions', async (req, res) => {
+    if (!pool) {
+        return res.status(500).json({
+            success: false,
+            error: 'Banco de dados não conectado'
+        });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+        const now = new Date();
+
+        // Buscar todos os usuários com sessão ativa (não expirada)
+        const [activeSessions] = await connection.query(
+            'SELECT DISTINCT ymid, request_var as email, session_expires_at FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at > ?',
+            [now]
+        );
+
+        const activeCount = activeSessions.length;
+        const activeDetails = activeSessions.map(s => {
+            const expiresAt = new Date(s.session_expires_at);
+            const timeRemaining = Math.max(0, Math.floor((expiresAt - now) / 1000)); // segundos
+            const minutesRemaining = Math.floor(timeRemaining / 60);
+            const secondsRemaining = timeRemaining % 60;
+
+            return {
+                userId: s.ymid,
+                email: s.email || 'N/A',
+                expiresAt: expiresAt.toISOString(),
+                timeRemaining: `${minutesRemaining}m ${secondsRemaining}s`,
+                timeRemainingSeconds: timeRemaining
+            };
+        });
+
+        connection.release();
+
+        console.log(`[ACTIVE-SESSIONS] ${activeCount} sessão(ões) ativa(s)`);
+        activeDetails.forEach(s => {
+            console.log(`[ACTIVE-SESSIONS]   - ${s.email} (${s.userId}) - Expira em: ${s.timeRemaining}`);
+        });
+
+        res.json({
+            success: true,
+            message: `${activeCount} sessão(ões) ativa(s)`,
+            active_sessions: activeCount,
+            sessions: activeDetails,
+            timestamp: now.toISOString()
+        });
+    } catch (error) {
+        console.error('[ACTIVE-SESSIONS] ❌ Erro ao buscar sessões ativas:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao buscar sessões ativas',
+            details: error.message
+        });
+    }
+});
+
+// ========================================
 // INICIAR SERVIDOR
 // ========================================
 async function startServer() {
