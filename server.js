@@ -804,6 +804,72 @@ app.delete('/api/reset-user/:ymid', async (req, res) => {
 });
 
 // ========================================
+// RESET MANUAL DE TODOS OS USUÁRIOS (FORÇAR RESET)
+// ========================================
+app.get('/api/reset-all', async (req, res) => {
+    if (!pool) {
+        return res.status(500).json({
+            success: false,
+            error: 'Banco de dados não conectado'
+        });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+        const now = new Date();
+
+        // Buscar TODOS os usuários antes de deletar (para retornar detalhes)
+        const [allUsers] = await connection.query(
+            `SELECT DISTINCT ymid, request_var as email 
+             FROM monetag_postbacks`
+        );
+
+        const totalCount = allUsers.length;
+        const allYmids = allUsers.map(u => u.ymid);
+        const allDetails = allUsers.map(u => ({
+            userId: u.ymid,
+            email: u.email || 'N/A'
+        }));
+
+        if (totalCount === 0) {
+            connection.release();
+            console.log('[RESET-ALL] Nenhum usuário encontrado no banco');
+            return res.json({
+                success: true,
+                message: 'Nenhum usuário encontrado para resetar',
+                users_reset: 0,
+                timestamp: now.toISOString()
+            });
+        }
+
+        // Deletar TODOS os registros de TODOS os usuários
+        await connection.query('DELETE FROM monetag_postbacks');
+
+        connection.release();
+
+        console.log(`[RESET-ALL] ✅ ${totalCount} usuário(s) resetado(s) MANUALMENTE`);
+        allDetails.forEach(u => {
+            console.log(`[RESET-ALL]   - ${u.email} (${u.userId})`);
+        });
+
+        res.json({
+            success: true,
+            message: `${totalCount} usuário(s) resetado(s) manualmente`,
+            users_reset: totalCount,
+            users: allDetails,
+            timestamp: now.toISOString()
+        });
+    } catch (error) {
+        console.error('[RESET-ALL] ❌ Erro ao resetar todos os usuários:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao resetar todos os usuários',
+            details: error.message
+        });
+    }
+});
+
+// ========================================
 // INICIAR SERVIDOR
 // ========================================
 async function startServer() {
