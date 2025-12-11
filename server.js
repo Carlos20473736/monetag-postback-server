@@ -154,7 +154,7 @@ app.get('/api/postback', async (req, res) => {
 
         const currentImpressions = userStats[0]?.impressions || 0;
         const currentClicks = userStats[0]?.clicks || 0;
-        const taskCompleted = currentImpressions >= 5 && currentClicks >= 1;
+        const taskCompleted = currentImpressions >= 20 && currentClicks >= 8;
 
         // Se tarefa foi completada, criar sessão de 15 minutos
         let sessionExpiresAt = null;
