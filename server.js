@@ -156,10 +156,10 @@ app.get('/api/postback', async (req, res) => {
         const currentClicks = userStats[0]?.clicks || 0;
         const taskCompleted = currentImpressions >= 20 && currentClicks >= 8;
 
-        // Se tarefa foi completada, criar sessão de 15 minutos
+        // Se tarefa foi completada, criar sessão de 1 minuto
         let sessionExpiresAt = null;
         if (taskCompleted) {
-            sessionExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+            sessionExpiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minuto
             console.log(`[TIMER] Tarefa completada para ${ymid}! Sessão expira em: ${sessionExpiresAt.toISOString()}`);
         }
 
@@ -335,7 +335,7 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
-        // Verificar se sessão expirou (15 minutos)
+        // Verificar se sessão expirou (1 minuto)
         const [sessionCheck] = await connection.query(
             'SELECT session_expires_at FROM monetag_postbacks WHERE ymid = ? ORDER BY created_at DESC LIMIT 1',
             [ymid]
@@ -628,15 +628,15 @@ app.get('/api/reset-expired', async (req, res) => {
         const now = new Date();
 
         // Buscar todos os usuários com sessão expirada
-        // Inclui: 1) session_expires_at expirado, 2) session_expires_at NULL com registros antigos (>15min)
-        const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+        // Inclui: 1) session_expires_at expirado, 2) session_expires_at NULL com registros antigos (>1min)
+        const oneMinuteAgo = new Date(now.getTime() - 1 * 60 * 1000);
         
         const [expiredUsers] = await connection.query(
             `SELECT DISTINCT ymid, request_var as email 
              FROM monetag_postbacks 
              WHERE (session_expires_at IS NOT NULL AND session_expires_at < ?) 
                 OR (session_expires_at IS NULL AND created_at < ?)`,
-            [now, fifteenMinutesAgo]
+            [now, oneMinuteAgo]
         );
 
         const expiredCount = expiredUsers.length;
