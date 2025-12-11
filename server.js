@@ -657,13 +657,14 @@ app.get('/api/reset-expired', async (req, res) => {
             });
         }
 
-        // Deletar postbacks dos usuários expirados (ambos os critérios)
-        await connection.query(
-            `DELETE FROM monetag_postbacks 
-             WHERE (session_expires_at IS NOT NULL AND session_expires_at < ?) 
-                OR (session_expires_at IS NULL AND created_at < ?)`,
-            [now, fifteenMinutesAgo]
-        );
+        // Deletar TODOS os postbacks dos usuários expirados (não apenas os antigos)
+        if (expiredYmids.length > 0) {
+            const placeholders = expiredYmids.map(() => '?').join(',');
+            await connection.query(
+                `DELETE FROM monetag_postbacks WHERE ymid IN (${placeholders})`,
+                expiredYmids
+            );
+        }
 
         connection.release();
 
