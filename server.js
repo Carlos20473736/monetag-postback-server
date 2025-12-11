@@ -613,6 +613,69 @@ app.get('/api/reset', handleReset);
 app.post('/api/reset', handleReset);
 
 // ========================================
+// RESET AUTOMÁTICO DE SESSÕES EXPIRADAS (CRON JOB)
+// ========================================
+app.get('/api/reset-expired', async (req, res) => {
+    if (!pool) {
+        return res.status(500).json({
+            success: false,
+            error: 'Banco de dados não conectado'
+        });
+    }
+
+    try {
+        const connection = await pool.getConnection();
+        const now = new Date();
+
+        // Buscar todos os usuários com sessão expirada
+        const [expiredUsers] = await connection.query(
+            'SELECT DISTINCT ymid FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at < ?',
+            [now]
+        );
+
+        const expiredCount = expiredUsers.length;
+        const expiredYmids = expiredUsers.map(u => u.ymid);
+
+        if (expiredCount === 0) {
+            connection.release();
+            console.log('[RESET-EXPIRED] Nenhum usuário com sessão expirada');
+            return res.json({
+                success: true,
+                message: 'Nenhum usuário com sessão expirada',
+                users_reset: 0,
+                timestamp: now.toISOString()
+            });
+        }
+
+        // Deletar postbacks dos usuários expirados
+        await connection.query(
+            'DELETE FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at < ?',
+            [now]
+        );
+
+        connection.release();
+
+        console.log(`[RESET-EXPIRED] ✅ ${expiredCount} usuário(s) resetado(s)`);
+        console.log(`[RESET-EXPIRED] Usuários: ${expiredYmids.join(', ')}`);
+
+        res.json({
+            success: true,
+            message: `${expiredCount} usuário(s) com sessão expirada resetado(s)`,
+            users_reset: expiredCount,
+            users: expiredYmids,
+            timestamp: now.toISOString()
+        });
+    } catch (error) {
+        console.error('[RESET-EXPIRED] ❌ Erro ao resetar sessões expiradas:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao resetar sessões expiradas',
+            details: error.message
+        });
+    }
+});
+
+// ========================================
 // INICIAR SERVIDOR
 // ========================================
 async function startServer() {
