@@ -629,12 +629,16 @@ app.get('/api/reset-expired', async (req, res) => {
 
         // Buscar todos os usuários com sessão expirada
         const [expiredUsers] = await connection.query(
-            'SELECT DISTINCT ymid FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at < ?',
+            'SELECT DISTINCT ymid, request_var as email FROM monetag_postbacks WHERE session_expires_at IS NOT NULL AND session_expires_at < ?',
             [now]
         );
 
         const expiredCount = expiredUsers.length;
         const expiredYmids = expiredUsers.map(u => u.ymid);
+        const expiredDetails = expiredUsers.map(u => ({
+            userId: u.ymid,
+            email: u.email || 'N/A'
+        }));
 
         if (expiredCount === 0) {
             connection.release();
@@ -656,13 +660,15 @@ app.get('/api/reset-expired', async (req, res) => {
         connection.release();
 
         console.log(`[RESET-EXPIRED] ✅ ${expiredCount} usuário(s) resetado(s)`);
-        console.log(`[RESET-EXPIRED] Usuários: ${expiredYmids.join(', ')}`);
+        expiredDetails.forEach(u => {
+            console.log(`[RESET-EXPIRED]   - ${u.email} (${u.userId})`);
+        });
 
         res.json({
             success: true,
             message: `${expiredCount} usuário(s) com sessão expirada resetado(s)`,
             users_reset: expiredCount,
-            users: expiredYmids,
+            users: expiredDetails,
             timestamp: now.toISOString()
         });
     } catch (error) {
