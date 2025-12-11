@@ -752,6 +752,58 @@ app.get('/api/active-sessions', async (req, res) => {
 });
 
 // ========================================
+// ENDPOINT: Forçar Reset de Usuário Específico
+// ========================================
+app.delete('/api/reset-user/:ymid', async (req, res) => {
+    if (!pool) {
+        return res.status(503).json({
+            success: false,
+            error: 'Banco de dados não conectado'
+        });
+    }
+
+    try {
+        const { ymid } = req.params;
+        const connection = await pool.getConnection();
+
+        // Buscar email do usuário antes de deletar
+        const [user] = await connection.query(
+            'SELECT DISTINCT request_var as email FROM monetag_postbacks WHERE ymid = ? LIMIT 1',
+            [ymid]
+        );
+
+        // Deletar todos os registros do usuário
+        const [result] = await connection.query(
+            'DELETE FROM monetag_postbacks WHERE ymid = ?',
+            [ymid]
+        );
+
+        connection.release();
+
+        const email = user.length > 0 ? user[0].email : 'N/A';
+        const deletedCount = result.affectedRows;
+
+        console.log(`[RESET-USER] ✅ Usuário ${ymid} (${email}) resetado - ${deletedCount} registro(s) deletado(s)`);
+
+        res.json({
+            success: true,
+            message: `Usuário ${ymid} resetado com sucesso`,
+            userId: ymid,
+            email: email,
+            records_deleted: deletedCount,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[RESET-USER] ❌ Erro ao resetar usuário:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao resetar usuário',
+            details: error.message
+        });
+    }
+});
+
+// ========================================
 // INICIAR SERVIDOR
 // ========================================
 async function startServer() {
