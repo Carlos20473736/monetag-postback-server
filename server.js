@@ -69,6 +69,7 @@ async function createTablesIfNotExists(connection) {
                 telegram_id VARCHAR(100),
                 estimated_price DECIMAL(10, 4) DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                session_expires_at TIMESTAMP NULL,
                 INDEX idx_event_type (event_type),
                 INDEX idx_zone_id (zone_id),
                 INDEX idx_ymid (ymid),
@@ -129,11 +130,28 @@ app.get('/api/postback', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
+        // Verificar se usuário completou a tarefa (5 impressões + 1 clique)
+        const [userStats] = await connection.query(
+            'SELECT COUNT(CASE WHEN event_type = "impression" THEN 1 END) as impressions, COUNT(CASE WHEN event_type = "click" THEN 1 END) as clicks FROM monetag_postbacks WHERE ymid = ?',
+            [ymid]
+        );
+
+        const currentImpressions = userStats[0]?.impressions || 0;
+        const currentClicks = userStats[0]?.clicks || 0;
+        const taskCompleted = currentImpressions >= 5 && currentClicks >= 1;
+
+        // Se tarefa foi completada, criar sessão de 15 minutos
+        let sessionExpiresAt = null;
+        if (taskCompleted) {
+            sessionExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+            console.log(`[TIMER] Tarefa completada para ${ymid}! Sessão expira em: ${sessionExpiresAt.toISOString()}`);
+        }
+
         // Inserir evento na tabela
         const finalPrice = estimated_price || 0;
-                await connection.query(
-            'INSERT INTO monetag_postbacks (event_type, zone_id, ymid, request_var, telegram_id, estimated_price) VALUES (?, ?, ?, ?, ?, ?)',
-            [event_type, zone_id, ymid || null, request_var || null, telegram_id || null, finalPrice]
+        await connection.query(
+            'INSERT INTO monetag_postbacks (event_type, zone_id, ymid, request_var, telegram_id, estimated_price, session_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [event_type, zone_id, ymid || null, request_var || null, telegram_id || null, finalPrice, sessionExpiresAt]
         );
 
         eventLog.lastEventId++;
@@ -301,6 +319,27 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
+        // Verificar se sessão expirou (15 minutos)
+        const [sessionCheck] = await connection.query(
+            'SELECT session_expires_at FROM monetag_postbacks WHERE ymid = ? ORDER BY created_at DESC LIMIT 1',
+            [ymid]
+        );
+
+        const now = new Date();
+        let sessionExpired = false;
+        let timeRemaining = 0;
+
+        if (sessionCheck[0]?.session_expires_at) {
+            const expiresAt = new Date(sessionCheck[0].session_expires_at);
+            sessionExpired = now > expiresAt;
+            timeRemaining = Math.max(0, Math.floor((expiresAt - now) / 1000)); // segundos restantes
+
+            if (sessionExpired) {
+                console.log(`[TIMER] Sessão expirada para ${ymid}, resetando...`);
+                await connection.query('DELETE FROM monetag_postbacks WHERE ymid = ?', [ymid]);
+            }
+        }
+
         const [impressions] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND ymid = ?',
             [ymid]
@@ -318,18 +357,20 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
 
         connection.release();
 
-        const totalImpressions = impressions[0]?.count || 0;
-        const totalClicks = clicks[0]?.count || 0;
-        const totalRevenue = revenue[0]?.total || 0;
+        const totalImpressions = sessionExpired ? 0 : (impressions[0]?.count || 0);
+        const totalClicks = sessionExpired ? 0 : (clicks[0]?.count || 0);
+        const totalRevenue = sessionExpired ? 0 : (revenue[0]?.total || 0);
 
-        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}`);
+        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}, Tempo restante: ${timeRemaining}s`);
 
         res.json({
             success: true,
             ymid: ymid,
             total_impressions: totalImpressions,
             total_clicks: totalClicks,
-            total_revenue: parseFloat(totalRevenue).toFixed(4)
+            total_revenue: parseFloat(totalRevenue).toFixed(4),
+            session_expired: sessionExpired,
+            time_remaining: timeRemaining
         });
     } catch (error) {
         console.error('[STATS] Erro ao buscar stats do usuario:', error.message);
