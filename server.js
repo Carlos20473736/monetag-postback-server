@@ -150,6 +150,18 @@ app.get('/api/postback', async (req, res) => {
     console.log(`[POSTBACK]   - estimated_price: ${estimated_price}`);
     console.log(`[POSTBACK]   - request_var: ${request_var}`);
     console.log(`[POSTBACK]   - telegram_id: ${telegram_id}`);
+    
+    // Log de User Agent e Headers
+    console.log(`[POSTBACK] 🔍 Headers:`);
+    console.log(`[POSTBACK]   - User-Agent: ${req.headers['user-agent']}`);
+    console.log(`[POSTBACK]   - Referer: ${req.headers['referer'] || 'N/A'}`);
+    console.log(`[POSTBACK]   - Origin: ${req.headers['origin'] || 'N/A'}`);
+    console.log(`[POSTBACK]   - X-Forwarded-For: ${req.headers['x-forwarded-for'] || 'N/A'}`);
+    console.log(`[POSTBACK]   - IP: ${req.ip}`);
+    
+    // Log de TODOS os parâmetros da query string
+    console.log(`[POSTBACK] 🔍 Query completa:`);
+    console.log(JSON.stringify(req.query, null, 2));
 
     // Validar dados obrigatórios
     if (!event_type || !zone_id) {
