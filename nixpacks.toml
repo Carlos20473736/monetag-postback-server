@@ -1,0 +1,11 @@
+# Nixpacks configuration for Railway deployment
+# This file configures the build process to avoid DNS issues with apt-get
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "libatomic"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[start]
+cmd = "node server.js"
