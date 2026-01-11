@@ -113,8 +113,52 @@ async function createTablesIfNotExists(connection) {
                 console.log('[DB] ✅ Coluna sub_zone_id já existe');
             }
         }
+        // Criar tabela para armazenar impressões necessárias por usuário
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS user_impressions_required (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                ymid VARCHAR(100) NOT NULL UNIQUE,
+                required_impressions INT DEFAULT 5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_ymid (ymid)
+            )
+        `);
+        console.log('[DB] ✅ Tabela user_impressions_required verificada/criada');
+        
     } catch (error) {
         console.error('[DB] ⚠️  Erro ao criar tabelas:', error.message);
+    }
+}
+
+// ========================================
+// FUNÇÃO PARA OBTER/CRIAR IMPRESSÕES NECESSÁRIAS DO USUÁRIO
+// ========================================
+async function getUserRequiredImpressions(connection, ymid) {
+    try {
+        // Verificar se usuário já tem um valor definido
+        const [existing] = await connection.query(
+            'SELECT required_impressions FROM user_impressions_required WHERE ymid = ?',
+            [ymid]
+        );
+        
+        if (existing.length > 0) {
+            return existing[0].required_impressions;
+        }
+        
+        // Se não existe, criar com valor aleatório entre 5 e 10
+        const randomImpressions = Math.floor(Math.random() * 6) + 5; // 5 a 10
+        
+        await connection.query(
+            'INSERT INTO user_impressions_required (ymid, required_impressions) VALUES (?, ?)',
+            [ymid, randomImpressions]
+        );
+        
+        console.log(`[IMPRESSIONS] Novo usuário ${ymid}: ${randomImpressions} impressões necessárias`);
+        return randomImpressions;
+    } catch (error) {
+        console.error('[IMPRESSIONS] Erro ao obter impressões:', error.message);
+        return 5; // Valor padrão em caso de erro
     }
 }
 
@@ -398,6 +442,9 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             }
         }
 
+        // Obter impressões necessárias do usuário (5-10 aleatório)
+        const requiredImpressions = await getUserRequiredImpressions(connection, ymid);
+
         const [impressions] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND ymid = ?',
             [ymid]
@@ -419,12 +466,13 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
         const totalClicks = sessionExpired ? 0 : (clicks[0]?.count || 0);
         const totalRevenue = sessionExpired ? 0 : (revenue[0]?.total || 0);
 
-        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}, Tempo restante: ${timeRemaining}s`);
+        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions}/${requiredImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}, Tempo restante: ${timeRemaining}s`);
 
         res.json({
             success: true,
             ymid: ymid,
             total_impressions: totalImpressions,
+            required_impressions: requiredImpressions,
             total_clicks: totalClicks,
             total_revenue: parseFloat(totalRevenue).toFixed(4),
             session_expired: sessionExpired,
@@ -610,6 +658,27 @@ const handleReset = async (req, res) => {
         // Deletar todos os postbacks
         await connection.query('DELETE FROM monetag_postbacks');
 
+        // RANDOMIZAR impressões necessárias de TODOS os usuários (5-10)
+        // Buscar todos os usuários existentes
+        const [existingUsers] = await connection.query(
+            'SELECT ymid FROM user_impressions_required'
+        );
+        
+        let usersRandomized = 0;
+        const randomizedDetails = [];
+        
+        for (const user of existingUsers) {
+            const newRequired = Math.floor(Math.random() * 6) + 5; // 5 a 10
+            await connection.query(
+                'UPDATE user_impressions_required SET required_impressions = ?, updated_at = NOW() WHERE ymid = ?',
+                [newRequired, user.ymid]
+            );
+            usersRandomized++;
+            randomizedDetails.push({ ymid: user.ymid, new_required: newRequired });
+        }
+        
+        console.log(`[RESET] 🎲 Impressões randomizadas para ${usersRandomized} usuários (5-10)`);
+
         // Limpar event log em memória
         eventLog.lastEventId = 0;
         eventLog.events = [];
@@ -627,12 +696,17 @@ const handleReset = async (req, res) => {
             message: 'Reset de postbacks executado com sucesso!',
             data: {
                 reset_type: 'monetag_postback_manual',
-                description: 'Todos os eventos de postback foram deletados',
+                description: 'Todos os eventos de postback foram deletados e impressões randomizadas (5-10)',
                 current_time: new Date().toISOString(),
                 events_deleted: totalEvents,
                 users_affected: totalUsers,
                 impressions_deleted: totalImpressions,
                 clicks_deleted: totalClicks,
+                impressions_randomized: {
+                    users_count: usersRandomized,
+                    range: '5-10',
+                    details: randomizedDetails.slice(0, 20) // Mostrar apenas os primeiros 20
+                },
                 reset_datetime: new Date().toISOString(),
                 timezone: 'America/Sao_Paulo (GMT-3)',
                 timestamp: Math.floor(Date.now() / 1000)
