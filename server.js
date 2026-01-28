@@ -169,14 +169,10 @@ app.get('/api/postback', async (req, res) => {
         return res.status(200).json({ success: true, message: 'Postback recebido' });
     }
     
-    // Validar estimated_price para cliques - só contabilizar se > 0
+    // Log de cliques (removida validação de estimated_price para não bloquear cliques)
     if (event_type === 'click') {
         const price = parseFloat(estimated_price || '0');
-        if (price <= 0) {
-            console.log(`[POSTBACK] ⚠️  Clique sem ganho (estimated_price = ${price}) - IGNORANDO`);
-            return res.status(200).json({ success: true, message: 'Clique sem ganho ignorado' });
-        }
-        console.log(`[POSTBACK] ✅ Clique válido com ganho (estimated_price = ${price})`);
+        console.log(`[POSTBACK] ✅ Clique detectado (estimated_price = ${price})`);
     }
 
     // Se banco não está conectado, retornar sucesso mesmo assim
