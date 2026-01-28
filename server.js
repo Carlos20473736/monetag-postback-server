@@ -234,6 +234,27 @@ app.get('/api/postback', async (req, res) => {
 
         connection.release();
 
+        // ========================================
+        // REPASSAR EVENTO PARA API YOUNGMONEY
+        // ========================================
+        if (ymid && event_type) {
+            try {
+                const youngmoneyUrl = `https://youngmoney-api-railway-production.up.railway.app/monetag/postback.php?type=${event_type}&user_id=${ymid}`;
+                console.log(`[POSTBACK] 📤 Repassando para YoungMoney: ${youngmoneyUrl}`);
+                
+                fetch(youngmoneyUrl, { method: 'GET' })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log(`[POSTBACK] ✅ Repassado para YoungMoney:`, data);
+                    })
+                    .catch(err => {
+                        console.error(`[POSTBACK] ⚠️ Erro ao repassar para YoungMoney:`, err.message);
+                    });
+            } catch (forwardError) {
+                console.error(`[POSTBACK] ⚠️ Erro ao repassar:`, forwardError.message);
+            }
+        }
+
         // Retornar sempre 200 OK
         res.status(200).json({
             success: true,
