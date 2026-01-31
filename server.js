@@ -184,28 +184,14 @@ app.get('/api/postback', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
-        // Verificar se usuário completou a tarefa (5 impressões + 1 clique)
-        const [userStats] = await connection.query(
-            'SELECT COUNT(CASE WHEN event_type = "impression" THEN 1 END) as impressions, COUNT(CASE WHEN event_type = "click" THEN 1 END) as clicks FROM monetag_postbacks WHERE ymid = ?',
-            [ymid]
-        );
-
-        const currentImpressions = userStats[0]?.impressions || 0;
-        const currentClicks = userStats[0]?.clicks || 0;
-        const taskCompleted = currentImpressions >= 20 && currentClicks >= 8;
-
-        // Se tarefa foi completada, criar sessão de 1 minuto
-        let sessionExpiresAt = null;
-        if (taskCompleted) {
-            sessionExpiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minuto
-            console.log(`[TIMER] Tarefa completada para ${ymid}! Sessão expira em: ${sessionExpiresAt.toISOString()}`);
-        }
-
-        // Inserir evento na tabela
+        // CORREÇÃO: Removida lógica de sessão com expiração de 1 minuto
+        // Os dados agora persistem até o reset diário às 23:50 (America/Sao_Paulo)
+        
+        // Inserir evento na tabela (sem session_expires_at)
         const finalPrice = estimated_price || 0;
         await connection.query(
             'INSERT INTO monetag_postbacks (event_type, zone_id, sub_zone_id, ymid, request_var, telegram_id, estimated_price, session_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [event_type, zone_id, sub_zone_id || null, ymid || null, request_var || null, telegram_id || null, finalPrice, sessionExpiresAt]
+            [event_type, zone_id, sub_zone_id || null, ymid || null, request_var || null, telegram_id || null, finalPrice, null]
         );
 
         eventLog.lastEventId++;
@@ -394,26 +380,8 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
     try {
         const connection = await pool.getConnection();
 
-        // Verificar se sessão expirou (1 minuto)
-        const [sessionCheck] = await connection.query(
-            'SELECT session_expires_at FROM monetag_postbacks WHERE ymid = ? ORDER BY created_at DESC LIMIT 1',
-            [ymid]
-        );
-
-        const now = new Date();
-        let sessionExpired = false;
-        let timeRemaining = 0;
-
-        if (sessionCheck[0]?.session_expires_at) {
-            const expiresAt = new Date(sessionCheck[0].session_expires_at);
-            sessionExpired = now > expiresAt;
-            timeRemaining = Math.max(0, Math.floor((expiresAt - now) / 1000)); // segundos restantes
-
-            if (sessionExpired) {
-                console.log(`[TIMER] Sessão expirada para ${ymid}, resetando...`);
-                await connection.query('DELETE FROM monetag_postbacks WHERE ymid = ?', [ymid]);
-            }
-        }
+        // CORREÇÃO: Removida lógica de sessão com expiração
+        // Os dados agora persistem até o reset diário às 23:50 (America/Sao_Paulo)
 
         const [impressions] = await connection.query(
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND ymid = ?',
@@ -432,11 +400,11 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
 
         connection.release();
 
-        const totalImpressions = sessionExpired ? 0 : (impressions[0]?.count || 0);
-        const totalClicks = sessionExpired ? 0 : (clicks[0]?.count || 0);
-        const totalRevenue = sessionExpired ? 0 : (revenue[0]?.total || 0);
+        const totalImpressions = impressions[0]?.count || 0;
+        const totalClicks = clicks[0]?.count || 0;
+        const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}, Tempo restante: ${timeRemaining}s`);
+        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
@@ -444,8 +412,8 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             total_impressions: totalImpressions,
             total_clicks: totalClicks,
             total_revenue: parseFloat(totalRevenue).toFixed(4),
-            session_expired: sessionExpired,
-            time_remaining: timeRemaining
+            session_expired: false,
+            time_remaining: 0
         });
     } catch (error) {
         console.error('[STATS] Erro ao buscar stats do usuario:', error.message);
@@ -672,81 +640,19 @@ app.get('/api/reset', handleReset);
 app.post('/api/reset', handleReset);
 
 // ========================================
-// RESET AUTOMÁTICO DE SESSÕES EXPIRADAS (CRON JOB)
+// RESET AUTOMÁTICO DE SESSÕES EXPIRADAS (CRON JOB) - DESATIVADO
+// CORREÇÃO: Este endpoint foi desativado para não deletar dados automaticamente
+// Os dados agora persistem até o reset diário às 23:50 (America/Sao_Paulo)
 // ========================================
 app.get('/api/reset-expired', async (req, res) => {
-    if (!pool) {
-        return res.status(500).json({
-            success: false,
-            error: 'Banco de dados não conectado'
-        });
-    }
-
-    try {
-        const connection = await pool.getConnection();
-        const now = new Date();
-
-        // Buscar todos os usuários com sessão expirada
-        // Inclui: 1) session_expires_at expirado, 2) session_expires_at NULL com registros antigos (>1min)
-        const oneMinuteAgo = new Date(now.getTime() - 1 * 60 * 1000);
-        
-        const [expiredUsers] = await connection.query(
-            `SELECT DISTINCT ymid, request_var as email 
-             FROM monetag_postbacks 
-             WHERE (session_expires_at IS NOT NULL AND session_expires_at < ?) 
-                OR (session_expires_at IS NULL AND created_at < ?)`,
-            [now, oneMinuteAgo]
-        );
-
-        const expiredCount = expiredUsers.length;
-        const expiredYmids = expiredUsers.map(u => u.ymid);
-        const expiredDetails = expiredUsers.map(u => ({
-            userId: u.ymid,
-            email: u.email || 'N/A'
-        }));
-
-        if (expiredCount === 0) {
-            connection.release();
-            console.log('[RESET-EXPIRED] Nenhum usuário com sessão expirada');
-            return res.json({
-                success: true,
-                message: 'Nenhum usuário com sessão expirada',
-                users_reset: 0,
-                timestamp: now.toISOString()
-            });
-        }
-
-        // Deletar TODOS os postbacks dos usuários expirados (não apenas os antigos)
-        if (expiredYmids.length > 0) {
-            const placeholders = expiredYmids.map(() => '?').join(',');
-            await connection.query(
-                `DELETE FROM monetag_postbacks WHERE ymid IN (${placeholders})`,
-                expiredYmids
-            );
-        }
-
-        connection.release();
-
-        console.log(`[RESET-EXPIRED] ✅ ${expiredCount} usuário(s) resetado(s)`);
-        expiredDetails.forEach(u => {
-            console.log(`[RESET-EXPIRED]   - ${u.email} (${u.userId})`);
-        });
-
-        res.json({
-            success: true,
-            message: `${expiredCount} usuário(s) com sessão expirada resetado(s)`,
-            users_reset: expiredCount,
-            users: expiredDetails,
-            timestamp: now.toISOString()
-        });
-    } catch (error) {
-        console.error('[RESET-EXPIRED] ❌ Erro ao resetar sessões expiradas:', error.message);
-        res.status(500).json({
-            success: false,
-            error: 'Erro ao resetar sessões expiradas',
-            details: error.message
-        });
-    }
+    // CORREÇÃO: Endpoint desativado - retorna sucesso sem deletar nada
+    console.log('[RESET-EXPIRED] Endpoint desativado - dados persistem até reset diário');
+    res.json({
+        success: true,
+        message: 'Endpoint desativado - dados persistem até reset diário às 23:50',
+        users_reset: 0,
+        timestamp: new Date().toISOString()
+    });
 });
 
 // ========================================
