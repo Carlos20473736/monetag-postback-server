@@ -200,33 +200,29 @@ app.get('/api/postback', async (req, res) => {
     
     // ========================================
     // VALIDAÇÃO 2: TIMESTAMP DE 10 SEGUNDOS
-    // Primeiro postback com ganho registra o timestamp
-    // Só contabiliza se passaram >= 10s desde o primeiro
+    // Registra quando o usuário começou a assistir
+    // Só contabiliza se passaram >= 10s desde o início
     // ========================================
     if (ymid) {
         const now = Date.now();
         
+        // Se não tem timestamp, registrar (usuário começou a assistir agora)
         if (!userFirstSeen[ymid]) {
-            // Primeiro postback com ganho deste usuário - registrar timestamp
             userFirstSeen[ymid] = now;
-            console.log(`[POSTBACK] ⏱️ Primeiro ganho do user ${ymid} - timestamp registrado. Aguardando 10s...`);
-            return res.status(200).json({ 
-                success: true, 
-                message: 'Timestamp registrado. Impressão será contabilizada após 10s.' 
-            });
+            console.log(`[POSTBACK] ⏱️ Usuário ${ymid} começou a assistir - timestamp registrado`);
         }
         
         const elapsedSeconds = (now - userFirstSeen[ymid]) / 1000;
         
         if (elapsedSeconds < MIN_SECONDS) {
-            console.log(`[POSTBACK] ⏳ Aguardando: ${elapsedSeconds.toFixed(1)}s / ${MIN_SECONDS}s (user: ${ymid})`);
+            console.log(`[POSTBACK] ⏳ Aguardando: ${elapsedSeconds.toFixed(1)}s / ${MIN_SECONDS}s (user: ${ymid}) - impressão não contabilizada ainda`);
             return res.status(200).json({ 
                 success: true, 
                 message: `Aguardando: ${elapsedSeconds.toFixed(1)}s de ${MIN_SECONDS}s` 
             });
         }
         
-        // Passou 10 segundos - aceitar e limpar timestamp
+        // Passou 10 segundos - aceitar e resetar para próximo ciclo
         console.log(`[POSTBACK] ✅ Tempo válido: ${elapsedSeconds.toFixed(1)}s >= ${MIN_SECONDS}s (user: ${ymid}) - CONTABILIZANDO!`);
         delete userFirstSeen[ymid];
     }
