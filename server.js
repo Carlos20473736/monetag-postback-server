@@ -20,6 +20,10 @@ const eventLog = {
     events: []
 };
 
+// Timestamp do primeiro postback de cada usuário (para validação de 10s)
+const userFirstSeen = {};
+const MIN_SECONDS = 10;
+
 
 // ========================================
 // INICIALIZAR CONEXÃO COM BANCO DE DADOS
@@ -178,7 +182,7 @@ app.get('/api/postback', async (req, res) => {
     }
     
     // ========================================
-    // VALIDAÇÃO POR GANHO (estimated_price > 0)
+    // VALIDAÇÃO 1: GANHO (estimated_price > 0)
     // Só aceita impressão se houve ganho real
     // Ex: 0.0001753 = ganho válido, 0 = sem ganho
     // ========================================
@@ -193,6 +197,39 @@ app.get('/api/postback', async (req, res) => {
     }
     
     console.log(`[POSTBACK] ✅ Ganho detectado: R$ ${priceValue} (user: ${ymid || 'anonymous'})`);
+    
+    // ========================================
+    // VALIDAÇÃO 2: TIMESTAMP DE 10 SEGUNDOS
+    // Primeiro postback com ganho registra o timestamp
+    // Só contabiliza se passaram >= 10s desde o primeiro
+    // ========================================
+    if (ymid) {
+        const now = Date.now();
+        
+        if (!userFirstSeen[ymid]) {
+            // Primeiro postback com ganho deste usuário - registrar timestamp
+            userFirstSeen[ymid] = now;
+            console.log(`[POSTBACK] ⏱️ Primeiro ganho do user ${ymid} - timestamp registrado. Aguardando 10s...`);
+            return res.status(200).json({ 
+                success: true, 
+                message: 'Timestamp registrado. Impressão será contabilizada após 10s.' 
+            });
+        }
+        
+        const elapsedSeconds = (now - userFirstSeen[ymid]) / 1000;
+        
+        if (elapsedSeconds < MIN_SECONDS) {
+            console.log(`[POSTBACK] ⏳ Aguardando: ${elapsedSeconds.toFixed(1)}s / ${MIN_SECONDS}s (user: ${ymid})`);
+            return res.status(200).json({ 
+                success: true, 
+                message: `Aguardando: ${elapsedSeconds.toFixed(1)}s de ${MIN_SECONDS}s` 
+            });
+        }
+        
+        // Passou 10 segundos - aceitar e limpar timestamp
+        console.log(`[POSTBACK] ✅ Tempo válido: ${elapsedSeconds.toFixed(1)}s >= ${MIN_SECONDS}s (user: ${ymid}) - CONTABILIZANDO!`);
+        delete userFirstSeen[ymid];
+    }
 
 
     // Se banco não está conectado, retornar sucesso mesmo assim
