@@ -222,9 +222,10 @@ app.get('/api/postback', async (req, res) => {
             });
         }
         
-        // Passou 10 segundos - aceitar e resetar para próximo ciclo
+        // Passou 10 segundos - aceitar e ATUALIZAR timestamp para o momento atual
+        // Assim o próximo anúncio já tem referência e não é rejeitado como "primeiro"
         console.log(`[POSTBACK] ✅ Tempo válido: ${elapsedSeconds.toFixed(1)}s >= ${MIN_SECONDS}s (user: ${ymid}) - CONTABILIZANDO!`);
-        delete userFirstSeen[ymid];
+        userFirstSeen[ymid] = now;
     }
 
 
