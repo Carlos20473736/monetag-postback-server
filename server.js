@@ -20,6 +20,11 @@ const eventLog = {
     events: []
 };
 
+// Armazenar timestamp de quando cada usuário abriu o anúncio
+// Usado para validar se o anúncio foi assistido por pelo menos 10 segundos
+const adStartTimes = {};
+const AD_MIN_SECONDS = 10; // Tempo mínimo em segundos
+
 // ========================================
 // INICIALIZAR CONEXÃO COM BANCO DE DADOS
 // ========================================
@@ -133,8 +138,30 @@ app.get('/health', (req, res) => {
 });
 
 // ========================================
+// ENDPOINT PARA REGISTRAR INÍCIO DO ANÚNCIO
+// Frontend chama quando o usuário clica em "ASSISTIR ANÚNCIO"
+// ========================================
+app.get('/api/ad-start', (req, res) => {
+    const { ymid } = req.query;
+    
+    if (!ymid) {
+        return res.status(200).json({ success: false, message: 'ymid required' });
+    }
+    
+    adStartTimes[ymid] = Date.now();
+    console.log(`[AD-START] ⏱️ Anúncio iniciado para user ${ymid} em ${new Date().toISOString()}`);
+    
+    res.status(200).json({ 
+        success: true, 
+        message: 'Ad start registered',
+        timestamp: adStartTimes[ymid]
+    });
+});
+
+// ========================================
 // ENDPOINT DE POSTBACK DO MONETAG (GET)
 // Recebe postbacks do SDK Monetag
+// Só aceita se o anúncio foi assistido por >= 10 segundos
 // ========================================
 app.get('/api/postback', async (req, res) => {
     // Extrair parâmetros da query string (conforme URL do Monetag)
@@ -173,6 +200,33 @@ app.get('/api/postback', async (req, res) => {
     if (event_type !== 'impression') {
         console.log(`[POSTBACK] ⚠️  Tipo de evento não suportado: ${event_type}`);
         return res.status(200).json({ success: true, message: 'Apenas impressões são aceitas' });
+    }
+    
+    // ========================================
+    // VALIDAÇÃO DE TEMPO MÍNIMO (10 SEGUNDOS)
+    // Só aceita impressão se o anúncio foi assistido por >= 10s
+    // ========================================
+    if (ymid && adStartTimes[ymid]) {
+        const elapsedMs = Date.now() - adStartTimes[ymid];
+        const elapsedSeconds = elapsedMs / 1000;
+        
+        if (elapsedSeconds < AD_MIN_SECONDS) {
+            console.log(`[POSTBACK] ❌ REJEITADO - Tempo insuficiente: ${elapsedSeconds.toFixed(1)}s < ${AD_MIN_SECONDS}s (user: ${ymid})`);
+            return res.status(200).json({ 
+                success: true, 
+                message: `Impressão rejeitada: anúncio assistido por apenas ${elapsedSeconds.toFixed(1)}s (mínimo: ${AD_MIN_SECONDS}s)` 
+            });
+        }
+        
+        console.log(`[POSTBACK] ✅ Tempo válido: ${elapsedSeconds.toFixed(1)}s >= ${AD_MIN_SECONDS}s (user: ${ymid})`);
+        // Limpar o timestamp após validação
+        delete adStartTimes[ymid];
+    } else if (ymid) {
+        console.log(`[POSTBACK] ⚠️ Sem registro de ad-start para user ${ymid} - rejeitando por segurança`);
+        return res.status(200).json({ 
+            success: true, 
+            message: 'Impressão rejeitada: nenhum anúncio foi iniciado para este usuário' 
+        });
     }
 
     // Se banco não está conectado, retornar sucesso mesmo assim
