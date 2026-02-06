@@ -169,10 +169,10 @@ app.get('/api/postback', async (req, res) => {
         return res.status(200).json({ success: true, message: 'Postback recebido' });
     }
     
-    // Log de cliques (removida validação de estimated_price para não bloquear cliques)
-    if (event_type === 'click') {
-        const price = parseFloat(estimated_price || '0');
-        console.log(`[POSTBACK] ✅ Clique detectado (estimated_price = ${price})`);
+    // APENAS IMPRESSÕES - remover suporte a cliques
+    if (event_type !== 'impression') {
+        console.log(`[POSTBACK] ⚠️  Tipo de evento não suportado: ${event_type}`);
+        return res.status(200).json({ success: true, message: 'Apenas impressões são aceitas' });
     }
 
     // Se banco não está conectado, retornar sucesso mesmo assim
@@ -320,12 +320,8 @@ app.get('/api/stats/:zone_id', async (req, res) => {
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND zone_id = ?',
             [zone_id]
         );
-
-        // Contar cliques da zona
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND zone_id = ?',
-            [zone_id]
-        );
+        // Cliques removidos - apenas impressões
+        const clicks = [{ count: 0 }];
 
         // Somar receita da zona
         const [revenue] = await connection.query(
@@ -339,13 +335,13 @@ app.get('/api/stats/:zone_id', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Zona ${zone_id}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
+        console.log(`[STATS] Zona ${zone_id}: ${totalImpressions} impressões, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             zone_id: zone_id,
             total_impressions: totalImpressions,
-            total_clicks: totalClicks,
+            total_clicks: 0,
             total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
@@ -388,10 +384,8 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             [ymid]
         );
 
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND ymid = ?',
-            [ymid]
-        );
+        // Cliques removidos - apenas impressões
+        const clicks = [{ count: 0 }];
 
         const [revenue] = await connection.query(
             'SELECT SUM(estimated_price) as total FROM monetag_postbacks WHERE ymid = ?',
@@ -404,13 +398,13 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}`);
+        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             ymid: ymid,
             total_impressions: totalImpressions,
-            total_clicks: totalClicks,
+            total_clicks: 0,
             total_revenue: parseFloat(totalRevenue).toFixed(4),
             session_expired: false,
             time_remaining: 0
@@ -421,7 +415,6 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             success: true,
             ymid: ymid,
             total_impressions: 0,
-            total_clicks: 0,
             total_revenue: '0.0000'
         });
     }
@@ -448,11 +441,8 @@ app.get('/api/stats', async (req, res) => {
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression"'
         );
 
-        // Contar cliques globais
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click"'
-        );
-
+        // Cliques removidos - apenas impressões
+        const clicks = [{ count: 0 }];
         // Somar receita global
         const [revenue] = await connection.query(
             'SELECT SUM(estimated_price) as total FROM monetag_postbacks'
@@ -464,12 +454,12 @@ app.get('/api/stats', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Global: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
+        console.log(`[STATS] Global: ${totalImpressions} impressões, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             total_impressions: totalImpressions,
-            total_clicks: totalClicks,
+            total_clicks: 0,
             total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
@@ -508,11 +498,8 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             [ymid]
         );
 
-        // Contar cliques do usuário
-        const [clicks] = await connection.query(
-            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND ymid = ?',
-            [ymid]
-        );
+        // Cliques removidos - apenas impressões
+        const clicks = [{ count: 0 }];
 
         // Somar receita do usuário
         const [revenue] = await connection.query(
@@ -526,13 +513,13 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Usuário ${ymid}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
+        console.log(`[STATS] Usuário ${ymid}: ${totalImpressions} impressões, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             ymid: ymid,
             total_impressions: totalImpressions,
-            total_clicks: totalClicks,
+            total_clicks: 0,
             total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
@@ -541,7 +528,6 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             success: true,
             ymid: ymid,
             total_impressions: 0,
-            total_clicks: 0,
             total_revenue: '0.0000'
         });
     }
