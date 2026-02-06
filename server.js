@@ -222,11 +222,9 @@ app.get('/api/postback', async (req, res) => {
         // Limpar o timestamp após validação
         delete adStartTimes[ymid];
     } else if (ymid) {
-        console.log(`[POSTBACK] ⚠️ Sem registro de ad-start para user ${ymid} - rejeitando por segurança`);
-        return res.status(200).json({ 
-            success: true, 
-            message: 'Impressão rejeitada: nenhum anúncio foi iniciado para este usuário' 
-        });
+        // Sem registro de ad-start - aceitar normalmente
+        // Isso pode acontecer se o server reiniciou ou se o postback veio de outra fonte
+        console.log(`[POSTBACK] ⚠️ Sem registro de ad-start para user ${ymid} - aceitando normalmente`);
     }
 
     // Se banco não está conectado, retornar sucesso mesmo assim
