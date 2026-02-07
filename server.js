@@ -20,11 +20,6 @@ const eventLog = {
     events: []
 };
 
-// Timestamp do primeiro postback de cada usuário (para validação de 10s)
-const userFirstSeen = {};
-const MIN_SECONDS = 10;
-
-
 // ========================================
 // INICIALIZAR CONEXÃO COM BANCO DE DADOS
 // ========================================
@@ -199,34 +194,10 @@ app.get('/api/postback', async (req, res) => {
     console.log(`[POSTBACK] ✅ Ganho detectado: R$ ${priceValue} (user: ${ymid || 'anonymous'})`);
     
     // ========================================
-    // VALIDAÇÃO 2: TIMESTAMP DE 10 SEGUNDOS
-    // Registra quando o usuário começou a assistir
-    // Só contabiliza se passaram >= 10s desde o início
+    // VALIDAÇÃO: APENAS GANHO
+    // Como o Monetag envia apenas um postback por anúncio (ao finalizar/gerar receita),
+    // a presença de um estimated_price > 0 já é prova de que o anúncio foi assistido.
     // ========================================
-    if (ymid) {
-        const now = Date.now();
-        
-        // Se não tem timestamp, registrar (usuário começou a assistir agora)
-        if (!userFirstSeen[ymid]) {
-            userFirstSeen[ymid] = now;
-            console.log(`[POSTBACK] ⏱️ Usuário ${ymid} começou a assistir - timestamp registrado`);
-        }
-        
-        const elapsedSeconds = (now - userFirstSeen[ymid]) / 1000;
-        
-        if (elapsedSeconds < MIN_SECONDS) {
-            console.log(`[POSTBACK] ⏳ Aguardando: ${elapsedSeconds.toFixed(1)}s / ${MIN_SECONDS}s (user: ${ymid}) - impressão não contabilizada ainda`);
-            return res.status(200).json({ 
-                success: true, 
-                message: `Aguardando: ${elapsedSeconds.toFixed(1)}s de ${MIN_SECONDS}s` 
-            });
-        }
-        
-        // Passou 10 segundos - aceitar e ATUALIZAR timestamp para o momento atual
-        // Assim o próximo anúncio já tem referência e não é rejeitado como "primeiro"
-        console.log(`[POSTBACK] ✅ Tempo válido: ${elapsedSeconds.toFixed(1)}s >= ${MIN_SECONDS}s (user: ${ymid}) - CONTABILIZANDO!`);
-        userFirstSeen[ymid] = now;
-    }
 
 
     // Se banco não está conectado, retornar sucesso mesmo assim
