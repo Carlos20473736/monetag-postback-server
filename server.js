@@ -480,6 +480,73 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
 });
 
 // ========================================
+// PROGRESSO DA TAREFA DE IMPRESSÃO (para roleta)
+// ========================================
+app.get('/monetag/progress.php', async (req, res) => {
+    const { user_id } = req.query;
+    
+    if (!user_id) {
+        return res.status(400).json({
+            success: false,
+            error: 'user_id é obrigatório'
+        });
+    }
+    
+    // Requisitos padrão
+    const REQUIRED_IMPRESSIONS = 5;
+    
+    if (!pool) {
+        return res.status(200).json({
+            success: true,
+            data: {
+                user_id: user_id,
+                required_impressions: REQUIRED_IMPRESSIONS,
+                current_impressions: 0,
+                completed: false
+            }
+        });
+    }
+    
+    try {
+        const connection = await pool.getConnection();
+        
+        // Buscar impressões do usuário
+        const [impressions] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND ymid = ?',
+            [user_id]
+        );
+        
+        connection.release();
+        
+        const currentImpressions = impressions[0]?.count || 0;
+        const completed = currentImpressions >= REQUIRED_IMPRESSIONS;
+        
+        console.log(`[PROGRESS] Usuário ${user_id}: ${currentImpressions}/${REQUIRED_IMPRESSIONS} impressões`);
+        
+        res.json({
+            success: true,
+            data: {
+                user_id: user_id,
+                required_impressions: REQUIRED_IMPRESSIONS,
+                current_impressions: currentImpressions,
+                completed: completed
+            }
+        });
+    } catch (error) {
+        console.error('[PROGRESS] ❌ Erro ao buscar progresso:', error.message);
+        res.status(200).json({
+            success: true,
+            data: {
+                user_id: user_id,
+                required_impressions: REQUIRED_IMPRESSIONS,
+                current_impressions: 0,
+                completed: false
+            }
+        });
+    }
+});
+
+// ========================================
 // OBTER ESTATu00cdSTICAS GLOBAIS
 // ========================================
 app.get('/api/stats', async (req, res) => {
