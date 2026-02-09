@@ -257,6 +257,40 @@ app.get('/api/postback', async (req, res) => {
                     .catch(err => {
                         console.error(`[POSTBACK] ⚠️ Erro ao repassar para YoungMoney:`, err.message);
                     });
+                
+                // ========================================
+                // MARCAR TAREFA DE IMPRESSÃO COMO COMPLETA
+                // ========================================
+                // Se uma impressão foi registrada com ganho, marcar a tarefa como completa
+                if (event_type === 'impression' && priceValue > 0) {
+                    try {
+                        const taskCompleteUrl = `https://youngmoney-api-railway-production.up.railway.app/api/trpc/taskProgress.complete`;
+                        const taskPayload = {
+                            userId: parseInt(ymid),
+                            taskType: 'impression',
+                            pointsAwarded: 0
+                        };
+                        
+                        console.log(`[POSTBACK] 🎯 Marcando tarefa de impressão como completa para usuário ${ymid}`);
+                        
+                        fetch(taskCompleteUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(taskPayload)
+                        })
+                            .then(response => response.json())
+                            .then(data => {
+                                console.log(`[POSTBACK] ✅ Tarefa de impressão marcada como completa:`, data);
+                            })
+                            .catch(err => {
+                                console.error(`[POSTBACK] ⚠️ Erro ao marcar tarefa como completa:`, err.message);
+                            });
+                    } catch (taskError) {
+                        console.error(`[POSTBACK] ⚠️ Erro ao processar conclusão de tarefa:`, taskError.message);
+                    }
+                }
             } catch (forwardError) {
                 console.error(`[POSTBACK] ⚠️ Erro ao repassar:`, forwardError.message);
             }
