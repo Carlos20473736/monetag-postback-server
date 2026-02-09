@@ -1043,4 +1043,47 @@ async function startServer() {
     });
 }
 
+// ========================================
+// ENDPOINT DE TESTE - MARCAR TAREFA COMO COMPLETA
+// ========================================
+app.get('/api/test/complete-task/:ymid', async (req, res) => {
+    const { ymid } = req.params;
+    
+    if (!pool) {
+        return res.status(200).json({
+            success: false,
+            error: 'Pool não disponível'
+        });
+    }
+    
+    try {
+        const connection = await pool.getConnection();
+        
+        // Registrar 10 impressões para o usuário
+        for (let i = 0; i < 10; i++) {
+            await connection.query(
+                `INSERT INTO monetag_postbacks (ymid, event_type, zone_id, estimated_price, created_at) 
+                 VALUES (?, 'impression', '10325249', 0.05, NOW())`,
+                [ymid]
+            );
+        }
+        
+        connection.release();
+        
+        console.log(`[TEST] ✅ 10 impressões adicionadas para usuário ${ymid}`);
+        
+        res.json({
+            success: true,
+            message: `10 impressões adicionadas para usuário ${ymid}`,
+            ymid: ymid
+        });
+    } catch (error) {
+        console.error('[TEST] ❌ Erro:', error.message);
+        res.status(200).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 startServer();
