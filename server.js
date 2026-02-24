@@ -170,28 +170,31 @@ app.get('/api/postback', async (req, res) => {
         return res.status(200).json({ success: true, message: 'Postback recebido' });
     }
     
-    // APENAS IMPRESSÕES - remover suporte a cliques
-    if (event_type !== 'impression') {
+    // Aceitar impressões e cliques
+    if (event_type !== 'impression' && event_type !== 'click') {
         console.log(`[POSTBACK] ⚠️  Tipo de evento não suportado: ${event_type}`);
-        return res.status(200).json({ success: true, message: 'Apenas impressões são aceitas' });
+        return res.status(200).json({ success: true, message: 'Apenas impressões e cliques são aceitos' });
     }
     
     // ========================================
     // VALIDAÇÃO 1: GANHO (estimated_price > 0)
-    // Só aceita impressão se houve ganho real
-    // Ex: 0.0001753 = ganho válido, 0 = sem ganho
+    // Para impressões: só aceita se houve ganho real
+    // Para cliques: aceita sempre (SDK pode enviar price 0)
     // ========================================
     const priceValue = parseFloat(estimated_price) || 0;
     
-    if (priceValue <= 0) {
-        console.log(`[POSTBACK] ❌ REJEITADO - Sem ganho: estimated_price=${estimated_price} (user: ${ymid || 'anonymous'})`);
+    if (event_type === 'impression' && priceValue <= 0) {
+        console.log(`[POSTBACK] ❌ REJEITADO - Impressão sem ganho: estimated_price=${estimated_price} (user: ${ymid || 'anonymous'})`);
         return res.status(200).json({ 
             success: true, 
             message: 'Impressão rejeitada: sem ganho (estimated_price = 0)' 
         });
     }
     
-    console.log(`[POSTBACK] ✅ Ganho detectado: R$ ${priceValue} (user: ${ymid || 'anonymous'})`);
+    console.log(`[POSTBACK] ✅ ${event_type.toUpperCase()} aceito: R$ ${priceValue} (user: ${ymid || 'anonymous'})`);
+    
+    // Para cliques com price 0, definir um valor padrão
+    const finalPriceValue = (event_type === 'click' && priceValue <= 0) ? 0.0045 : priceValue;
     
     // ========================================
     // VALIDAÇÃO: APENAS GANHO
@@ -213,7 +216,7 @@ app.get('/api/postback', async (req, res) => {
         // Os dados agora persistem até o reset diário às 23:50 (America/Sao_Paulo)
         
         // Inserir evento na tabela (sem session_expires_at)
-        const finalPrice = estimated_price || 0;
+        const finalPrice = finalPriceValue || estimated_price || 0;
         await connection.query(
             'INSERT INTO monetag_postbacks (event_type, zone_id, sub_zone_id, ymid, request_var, telegram_id, estimated_price, session_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [event_type, zone_id, sub_zone_id || null, ymid || null, request_var || null, telegram_id || null, finalPrice, null]
@@ -258,20 +261,20 @@ app.get('/api/postback', async (req, res) => {
                         console.error(`[POSTBACK] ⚠️ Erro ao repassar para YoungMoney:`, err.message);
                     });
                 
-                // ========================================
-                // MARCAR TAREFA DE IMPRESSÃO COMO COMPLETA
-                // ========================================
-                // Se uma impressão foi registrada com ganho, marcar a tarefa como completa
-                if (event_type === 'impression' && priceValue > 0) {
+        // ========================================
+        // MARCAR TAREFA COMO COMPLETA (IMPRESSÃO OU CLIQUE)
+        // ========================================
+        // Se uma impressão ou clique foi registrado com ganho, marcar a tarefa como completa
+        if ((event_type === 'impression' || event_type === 'click') && priceValue > 0) {
                     try {
                         const taskCompleteUrl = `https://youngmoney-api-railway-production.up.railway.app/api/trpc/taskProgress.complete`;
                         const taskPayload = {
                             userId: parseInt(ymid),
-                            taskType: 'impression',
+                            taskType: event_type,
                             pointsAwarded: 0
                         };
                         
-                        console.log(`[POSTBACK] 🎯 Marcando tarefa de impressão como completa para usuário ${ymid}`);
+                        console.log(`[POSTBACK] 🎯 Marcando tarefa de ${event_type} como completa para usuário ${ymid}`);
                         
                         fetch(taskCompleteUrl, {
                             method: 'POST',
@@ -282,13 +285,13 @@ app.get('/api/postback', async (req, res) => {
                         })
                             .then(response => response.json())
                             .then(data => {
-                                console.log(`[POSTBACK] ✅ Tarefa de impressão marcada como completa:`, data);
+                                console.log(`[POSTBACK] ✅ Tarefa de ${event_type} marcada como completa:`, data);
                             })
                             .catch(err => {
-                                console.error(`[POSTBACK] ⚠️ Erro ao marcar tarefa como completa:`, err.message);
+                                console.error(`[POSTBACK] ⚠️ Erro ao marcar tarefa de ${event_type} como completa:`, err.message);
                             });
                     } catch (taskError) {
-                        console.error(`[POSTBACK] ⚠️ Erro ao processar conclusão de tarefa:`, taskError.message);
+                        console.error(`[POSTBACK] ⚠️ Erro ao processar conclusão de tarefa de ${event_type}:`, taskError.message);
                     }
                 }
             } catch (forwardError) {
@@ -379,8 +382,11 @@ app.get('/api/stats/:zone_id', async (req, res) => {
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression" AND zone_id = ?',
             [zone_id]
         );
-        // Cliques removidos - apenas impressões
-        const clicks = [{ count: 0 }];
+        // Contar cliques da zona
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND zone_id = ?',
+            [zone_id]
+        );
 
         // Somar receita da zona
         const [revenue] = await connection.query(
@@ -394,13 +400,13 @@ app.get('/api/stats/:zone_id', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Zona ${zone_id}: ${totalImpressions} impressões, R$ ${totalRevenue}`);
+        console.log(`[STATS] Zona ${zone_id}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             zone_id: zone_id,
             total_impressions: totalImpressions,
-            total_clicks: 0,
+            total_clicks: totalClicks,
             total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
@@ -443,8 +449,11 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             [ymid]
         );
 
-        // Cliques removidos - apenas impressões
-        const clicks = [{ count: 0 }];
+        // Contar cliques do usuário
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND ymid = ?',
+            [ymid]
+        );
 
         const [revenue] = await connection.query(
             'SELECT SUM(estimated_price) as total FROM monetag_postbacks WHERE ymid = ?',
@@ -457,13 +466,13 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, R$ ${totalRevenue}`);
+        console.log(`[STATS] Usuario ${ymid}: ${totalImpressions} impressoes, ${totalClicks} cliques, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             ymid: ymid,
             total_impressions: totalImpressions,
-            total_clicks: 0,
+            total_clicks: totalClicks,
             total_revenue: parseFloat(totalRevenue).toFixed(4),
             session_expired: false,
             time_remaining: 0
@@ -567,8 +576,10 @@ app.get('/api/stats', async (req, res) => {
             'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "impression"'
         );
 
-        // Cliques removidos - apenas impressões
-        const clicks = [{ count: 0 }];
+        // Contar cliques globais
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click"'
+        );
         // Somar receita global
         const [revenue] = await connection.query(
             'SELECT SUM(estimated_price) as total FROM monetag_postbacks'
@@ -580,12 +591,12 @@ app.get('/api/stats', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Global: ${totalImpressions} impressões, R$ ${totalRevenue}`);
+        console.log(`[STATS] Global: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             total_impressions: totalImpressions,
-            total_clicks: 0,
+            total_clicks: totalClicks,
             total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
@@ -624,8 +635,11 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
             [ymid]
         );
 
-        // Cliques removidos - apenas impressões
-        const clicks = [{ count: 0 }];
+        // Contar cliques do usuário
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND ymid = ?',
+            [ymid]
+        );
 
         // Somar receita do usuário
         const [revenue] = await connection.query(
@@ -639,13 +653,13 @@ app.get('/api/stats/user/:ymid', async (req, res) => {
         const totalClicks = clicks[0]?.count || 0;
         const totalRevenue = revenue[0]?.total || 0;
 
-        console.log(`[STATS] Usuário ${ymid}: ${totalImpressions} impressões, R$ ${totalRevenue}`);
+        console.log(`[STATS] Usuário ${ymid}: ${totalImpressions} impressões, ${totalClicks} cliques, R$ ${totalRevenue}`);
 
         res.json({
             success: true,
             ymid: ymid,
             total_impressions: totalImpressions,
-            total_clicks: 0,
+            total_clicks: totalClicks,
             total_revenue: parseFloat(totalRevenue).toFixed(4)
         });
     } catch (error) {
