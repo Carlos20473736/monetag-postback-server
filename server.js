@@ -503,6 +503,7 @@ app.get('/monetag/progress.php', async (req, res) => {
     
     // Requisitos padrão
     const REQUIRED_IMPRESSIONS = 20;
+    const REQUIRED_CLICKS = 2;
     
     if (!pool) {
         return res.status(200).json({
@@ -510,7 +511,11 @@ app.get('/monetag/progress.php', async (req, res) => {
             data: {
                 user_id: user_id,
                 required_impressions: REQUIRED_IMPRESSIONS,
+                required_clicks: REQUIRED_CLICKS,
                 current_impressions: 0,
+                current_clicks: 0,
+                impressions_completed: false,
+                clicks_completed: false,
                 completed: false
             }
         });
@@ -525,19 +530,32 @@ app.get('/monetag/progress.php', async (req, res) => {
             [user_id]
         );
         
+        // Buscar cliques do usuário
+        const [clicks] = await connection.query(
+            'SELECT COUNT(*) as count FROM monetag_postbacks WHERE event_type = "click" AND ymid = ?',
+            [user_id]
+        );
+        
         connection.release();
         
         const currentImpressions = impressions[0]?.count || 0;
-        const completed = currentImpressions >= REQUIRED_IMPRESSIONS;
+        const currentClicks = clicks[0]?.count || 0;
+        const impressionsCompleted = currentImpressions >= REQUIRED_IMPRESSIONS;
+        const clicksCompleted = currentClicks >= REQUIRED_CLICKS;
+        const completed = impressionsCompleted && clicksCompleted;
         
-        console.log(`[PROGRESS] Usuário ${user_id}: ${currentImpressions}/${REQUIRED_IMPRESSIONS} impressões`);
+        console.log(`[PROGRESS] Usuário ${user_id}: ${currentImpressions}/${REQUIRED_IMPRESSIONS} impressões, ${currentClicks}/${REQUIRED_CLICKS} cliques`);
         
         res.json({
             success: true,
             data: {
                 user_id: user_id,
                 required_impressions: REQUIRED_IMPRESSIONS,
+                required_clicks: REQUIRED_CLICKS,
                 current_impressions: currentImpressions,
+                current_clicks: currentClicks,
+                impressions_completed: impressionsCompleted,
+                clicks_completed: clicksCompleted,
                 completed: completed
             }
         });
@@ -548,7 +566,11 @@ app.get('/monetag/progress.php', async (req, res) => {
             data: {
                 user_id: user_id,
                 required_impressions: REQUIRED_IMPRESSIONS,
+                required_clicks: REQUIRED_CLICKS,
                 current_impressions: 0,
+                current_clicks: 0,
+                impressions_completed: false,
+                clicks_completed: false,
                 completed: false
             }
         });
