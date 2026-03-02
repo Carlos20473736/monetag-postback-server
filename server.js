@@ -502,7 +502,7 @@ app.get('/monetag/progress.php', async (req, res) => {
     }
     
     // Requisitos padrão
-    const REQUIRED_IMPRESSIONS = 5;
+    const REQUIRED_IMPRESSIONS = 20;
     
     if (!pool) {
         return res.status(200).json({
